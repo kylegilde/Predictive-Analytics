@@ -2,22 +2,36 @@
 title: "Introduction to Time Series Forecasting"
 author: "Kyle Gilde"
 date: "January 27, 2019"
-output: word_document
+output:
+  html_notebook:
+    code_folding: show
+    toc: yes
+    toc_float: yes
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-library("fpp2")
+knitr::opts_chunk$set(
+                      error = F
+                      , message = T
+                      #,tidy = T
+                      , cache = T
+                      , warning = F
+                      #, echo = F
+                      )
+
 ```
 
-# R Markdown
+# Chapter 2
 
-## 2.3 Download some monthly Australian retail data from the book website. These represent retail sales in various categories for different Australian states, and are stored in a MS-Excel file.
+## 2.3 
+
+Download some monthly Australian retail data from the book website. These represent retail sales in various categories for different Australian states, and are stored in a MS-Excel file.
 
 You can read the data into R with the following script:
 
 ```{r}
-#retaildata <- readxl::read_excel("retail.xlsx", skip=1)
+library("fpp2")
+retaildata <- readxl::read_excel("retail.xlsx", skip=1)
 ```
 
 
@@ -25,8 +39,9 @@ The second argument (skip=1) is required because the Excel sheet has two header 
 
 Select one of the time series as follows (but replace the column name with your own chosen column):
 ```{r}
-# myts <- ts(retaildata[,"A3349873A"],
-#   frequency=12, start=c(1982,4))
+myts <- ts(retaildata[,"A3349815C"],
+           frequency=12, 
+           start=c(1982,4))
 ```
 
 Explore your chosen retail time series using the following functions:
@@ -35,46 +50,134 @@ autoplot(), ggseasonplot(), ggsubseriesplot(), gglagplot(), ggAcf()
 
 Can you spot any seasonality, cyclicity and trend? What do you learn about the series?
 
-## 2.7 The arrivals data set comprises quarterly international arrivals (in thousands) to Australia from Japan, New Zealand, UK and the US.
+```{r, fig.width=15, fig.height=15}
+gridExtra::grid.arrange(
+  ggplot2::autoplot(myts),
+  forecast::ggseasonplot(myts),
+  forecast::ggsubseriesplot(myts),
+  forecast::ggAcf(myts)
+)
+
+
+```
+```{r, fig.width=12, fig.height=12}
+forecast::gglagplot(myts)
+```
+
+
+## 2.7 
+
+The arrivals data set comprises quarterly international arrivals (in thousands) to Australia from Japan, New Zealand, UK and the US.
 
 Use autoplot(), ggseasonplot() and ggsubseriesplot() to compare the differences between the arrivals from these four countries.
 Can you identify any unusual observations?
 
-## dj contains 292 consecutive trading days of the Dow Jones Index. Use ddj <- diff(dj) to compute the daily changes in the index. Plot ddj and its ACF. Do the changes in the Dow Jones Index look like white noise?
+```{r, fig.width=15, fig.height=15}
+ggplot2::autoplot(arrivals, facets=T) +
+  geom_smooth()
 
-## 3.1 For the following series, find an appropriate Box-Cox transformation in order to stabilise the variance.
 
-usnetelec
-usgdp
-mcopper
-enplanements
+```
+```{r, fig.width=15, fig.height=15}
+gridExtra::grid.arrange(
+  forecast::ggseasonplot(arrivals[, "Japan"]),
+  forecast::ggseasonplot(arrivals[, "NZ"]),
+  forecast::ggseasonplot(arrivals[, "UK"]),
+  forecast::ggseasonplot(arrivals[, "US" ])
+)
+```
 
-## 3.8 For your retail time series (from Exercise 3 in Section 2.10):
+```{r, fig.width=15, fig.height=15}
+gridExtra::grid.arrange(
+  forecast::ggsubseriesplot(arrivals[, 1]),
+  forecast::ggsubseriesplot(arrivals[, 2]),
+  forecast::ggsubseriesplot(arrivals[, 3]),
+  forecast::ggsubseriesplot(arrivals[, 4])
+)
+
+
+```
+
+
+## 2.10
+
+
+dj contains 292 consecutive trading days of the Dow Jones Index. Use ddj <- diff(dj) to compute the daily changes in the index. Plot ddj and its ACF. Do the changes in the Dow Jones Index look like white noise?
+```{r}
+ddj <- diff(dj) 
+forecast::ggAcf(ddj)
+```
+
+# Chapter 3
+
+## 3.1 
+
+For the following series, find an appropriate Box-Cox transformation in order to stabilise the variance.
+
+
+
+```{r fig.width=12, fig.height=15}
+lambda <- forecast::BoxCox.lambda(usnetelec)
+lambda2 <- forecast::BoxCox.lambda(usgdp)
+lambda3 <- forecast::BoxCox.lambda(mcopper)
+lambda4 <- forecast::BoxCox.lambda(enplanements)
+
+gridExtra::grid.arrange(
+  autoplot(usnetelec),
+  autoplot(BoxCox(usnetelec, lambda)),
+  autoplot(usgdp),
+  autoplot(BoxCox(usgdp, lambda2)),
+  autoplot(mcopper),
+  autoplot(BoxCox(mcopper, lambda3)),
+  autoplot(enplanements),
+  autoplot(BoxCox(enplanements, lambda4)),
+  ncol = 2
+)
+
+```
+
+
+## 3.8 
+
+For your retail time series (from Exercise 3 in Section 2.10):
 
 Split the data into two parts using
 ```{r}
-# myts.train <- window(myts, end=c(2010,12))
-# myts.test <- window(myts, start=2011)
+myts.train <- window(myts, end=c(2010,12))
+myts.test <- window(myts, start=2011)
+
 ```
+
 
 
 Check that your data have been split appropriately by producing the following plot.
 
 ```{r}
-# autoplot(myts) +
-  # autolayer(myts.train, series="Training") +
-  # autolayer(myts.test, series="Test")
+autoplot(myts) +
+autolayer(myts.train, series="Training") +
+autolayer(myts.test, series="Test")
 ```
+
 
 Calculate forecasts using snaive applied to myts.train.
 
-fc <- snaive(myts.train)
-Compare the accuracy of your forecasts against the actual values stored in myts.test.
 
-accuracy(fc,myts.test)
+
+```{r}
+fc <- snaive(myts.train)
+```
+Compare the accuracy of your forecasts against the actual values stored in myts.test.
+```{r}
+accuracy(fc, myts.test)
+```
+
+
 Check the residuals.
+```{r fig.width=12, fig.height=12}
 
 checkresiduals(fc)
+```
+
 Do the residuals appear to be uncorrelated and normally distributed?
 
 How sensitive are the accuracy measures to the training/test split?
