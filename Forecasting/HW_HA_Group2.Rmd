@@ -1,0 +1,1342 @@
+---
+title: "Introduction to Time Series Forecasting"
+author: "John Grando, Kyle Gilde, Jonathan Hernandez, Albert Gilharry, Neil Hwang"
+date: "January 27, 2019"
+output:
+  word_document:
+    toc: yes
+  html_document:
+    code_folding: show
+    toc: yes
+    toc_float: yes
+subtitle: DATA 624 Group 2 Homework
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width=10, 
+                      fig.height=5,
+                      fig.align = 'center', 
+                      echo = TRUE,
+                      cache = FALSE)
+```
+
+```{r echo=FALSE}
+#library modules
+suppressMessages(suppressWarnings(library(fpp2)))
+suppressMessages(suppressWarnings(library(httr)))
+suppressWarnings(suppressMessages(library(grid)))
+suppressWarnings(suppressMessages(library(gridExtra))) #for grid.arrange.
+suppressWarnings(suppressMessages(library(dplyr)))
+suppressWarnings(suppressMessages(library(tidyr)))
+suppressWarnings(suppressMessages(library(stringr)))
+suppressWarnings(suppressMessages(library(scales)))
+suppressWarnings(suppressMessages(library(xts)))
+suppressWarnings(suppressMessages(library(ggfortify)))
+suppressWarnings(suppressMessages(library(zoo)))
+suppressWarnings(suppressMessages(library(forecast))) #for ggseasonplot()
+suppressWarnings(suppressMessages(library(ggplot2))) 
+suppressWarnings(suppressMessages(library(data.table))) 
+suppressWarnings(suppressMessages(library(urca))) 
+suppressWarnings(suppressMessages(library(mlbench))) 
+suppressWarnings(suppressMessages(library(corrplot)))
+suppressWarnings(suppressMessages(library(caret)))
+suppressWarnings(suppressMessages(library(e1071)))
+suppressWarnings(suppressMessages(library(C50)))
+suppressWarnings(suppressMessages(library(psych))) #for describe()
+suppressWarnings(suppressMessages(library(mi)))
+```
+
+# Overview
+
+**For each response, and commentary, provided by us, the text will be bolded, as it appears here**
+
+# Chapter 2: Times Series Graphics
+
+## Question 2.3
+
+Download some monthly Australian retail data from the book website. These represent retail sales in various categories for different Australian states, and are stored in a MS-Excel file.
+
+**This exercise starts off fairly simple by just providing download and loading instructions.  I can see from the code that this is monthly data (frequency = 12) and that we are getting data starting from April 1982 (start=c(1982,4)).  I will then plot each requested graph and then respond to question pertaining to seasonality, cyclicity and trend below.**
+
+  a. You can read the data into R with the following script:
+    
+    The second argument (skip=1) is required because the Excel sheet has two header rows.
+
+```{r 2.3}
+if(!file.exists('Misc/retail.xlsx')){
+  GET('https://otexts.com/fpp2/extrafiles/retail.xlsx', write_disk(tf <- tempfile(fileext = ".xlsx")))
+  retaildata <- readxl::read_excel(tf, skip=1)
+}
+if(file.exists('Misc/retail.xlsx')){
+  retaildata <- readxl::read_excel('Misc/retail.xlsx', skip=1)
+}
+#read(retaildata)
+#names(retaildata)
+```
+
+  b. Select one of the time series as follows (but replace the column name with your own chosen column):
+
+```{r}
+myts <- ts(retaildata[,"A3349335T"],frequency=12, start=c(1982,4))
+```
+
+  c. Explore your chosen retail time series using the following functions:
+  `autoplot()`, `ggseasonplot()`, `ggsubseriesplot()`, `gglagplot()`, `ggAcf()` Can you spot any seasonality, cyclicity and trend? What do you learn about the series?
+
+**There is an obvious increasing trend with a clear seasonality whose magnitude increases as the year advances. However, there is no evidence of cyclic behavior in this chart. An interesting observation is that at the beginning of each year, there is a sudden drop in sales (which translates to "turnover" in Australian business terms means, as used in the data set). This appears to be related to the spike in shopping during holidays at year-end, which makes the comparative volume of sales at beginning of year look much less.**
+
+```{r}
+autoplot(myts) + ggtitle("Total Turnover for A3349335T") + 
+  theme(plot.title = element_text(hjust = 0.5)) + # to center the plot title
+  xlab("Month_Year") +
+  ylab("Total_Sales in A$'000s")
+```
+
+**The seasonality appears to be quite similar across all years, with the seasonality being flat for most months except the beginning and the end of each year. For all the years in the data shown above, the sales spiked in December due to the shopping seasonality effect. Starting with year 1997, there appears to be a noticeable decline in sales in February of each year, which as noted above could be due to the spikes in sales during the holiday season comprised of the months of December and January. The data set appears to have started in April of 1982.**
+
+
+```{r}
+ggseasonplot(myts, year.labels=TRUE, year.labels.left=TRUE) +
+  theme(plot.title = element_text(hjust = 0.5)) +  # to center the plot title
+  ylab("Total_Sales in A$'000s by Year") +
+  ggtitle("Seasonal plot: Total Turnover for A3349335T")
+```
+
+**As previously observed, the mean for December is indeed higher than those of other months, with all months displaying increasing sales over time. Using the window() function, I started with year 1983 since that is the first year with the fully available data, since the data collection appears to have started in April 1982. For all months, the relationship is positive, with lag 12 showing the strongest seasonality effect.**
+
+```{r fig.width=10, fig.height=8}
+myts2 <- window(myts, start=1983)
+gglagplot(myts2)
+```
+
+```{r}
+ggsubseriesplot(myts) +
+  theme(plot.title = element_text(hjust = 0.5)) +  # to center the plot title+
+  ylab("Total_Sales in A$'000s") +
+  ggtitle("Seasonal subseries plot: Total Turnover for A3349335T")
+```
+
+**The autocorrelation measures for all lags are significantly higher than the dashed blue line, which indicates that the correlations are significantly different from zero. Small lags are larger than larger lags due to the increasing trend in the sales data. This is explained by the fact that observations nearby in time are also close to each other's size, which leads to the autocorrelations of the data having positive values decrease slowly as lags increase. The data are seasonal, in particular, r1 is higher than that for other lags given the relative flat time series for most months for all years except spikes at the year-ends.**
+
+```{r}
+ggAcf(myts2)
+```
+
+## Question 2.7
+
+The arrivals data set comprises quarterly international arrivals (in thousands) to Australia from Japan, New Zealand, UK and the US.
+
+```{r 2.7, echo}
+head(arrivals)
+myts <- ts(arrivals,frequency=4, start=c(1981,1))
+```
+
+Use `autoplot()`, `ggseasonplot()` and `ggsubseriesplot()` to compare the differences between the arrivals from these four countries.
+
+Can you identify any unusual observations?
+
+**There appears to be a seasonality in the time series for all countries. With the exception of New Zealand, the peaks occur in the fourth quarter and subsequently falling in the first quarter of the following year. This makes sense given that Australia is in the southern hemisphere, and so December would be a summer month there, while it would be winter month in the three countries except New Zealand. Unsurprisingly, for New Zealand, the peak quarter is 3, which would be spring for both countries. There is a generally upward trend for all but Japan, for which the trend seems to have reversed in late 1990s. Historically, this makes sense since Japan was swept up in the Asian Financial Crisis that started in 1997 and lasted until late 1998, following which Japan began its longest-lasting stagflation in the first decade of 2000. There does not appear to be any sign of cyclicality, however.**
+
+```{r}
+autoplot(myts) + ggtitle("Arrivals by Source Country") + 
+  theme(plot.title = element_text(hjust = 0.5)) + # to center the plot title
+  xlab("Year") +
+  ylab("Arrivals in thousands")
+```
+
+**We organize the remaining plots into grids.**
+
+**First, below on the top left is the seasonal plot for tourists arriving from Japan. Interestingly, the number of arrivals was more or less flat throughout the year for all years until 1987, after which the arrivals started displaying a zigzagging pattern, starting high in Q1, then falling in Q2, then rising again in Q3, then falling in Q4.**
+
+**This could be explained by Japan's aging population. In the 1980s, the working-age people comprised the majority of the population, and hence most likely came to Australia throughout all seasons, especially in May through August when it's summer in Japan, but winter in Australia. Such months are typically not very popular in Australia, but for younger tourists, skiing could have been an attraction.**
+
+**To the right is New Zealand. Unlike Japan, New Zealand tourists clearly exhibit a constant seasonality for all years, starting low in Q1 then gradually increasingly throughout the year for most years. For the first decade in 2000, this increasing trend in each year seems to have peaked in Q3 then falling slightly in Q4.**
+
+**Below is the seasonal plot for the U.K. In stark contrast to the two earlier countries, the volumes of tourists from the U.K. seem to have followed a U-shaped pattern for all years, with the high number coming in Q1, then dipping sharply in Q2 and staying flat through Q3, then rising sharply in Q4. What is amazing is that this trend seems to have continued for all years in the sample, and hence makes U.K. a highly seasonal tourist country for Australia.**
+
+**In the US plot, There is a clear upward trend in annual volume as seen by the clear shift between each line from earlier years to later years. The quarterly trend within each year is more varied than the one for the U.S., although the U-shaped density appears to have been followed for most of the years, with the exception of early 1990s. In particular, the sudden spike in Q3 of 1991 stands out as a clear anomaly. This is a bit strange given the fact that the oil price had surged due to the U.S. entering a war against Iraq during that time period. One would surmise that this would have made the cost of travel higher.**
+
+```{r fig.align='center', fig.width=10, fig.height=10}
+p1 <- ggseasonplot(myts[,1], year.labels=TRUE, year.labels.left=TRUE) +
+  theme(plot.title = element_text(hjust = 0.5)) + ylab("Arrivals in thousands") 
+  ggtitle("Seasonal plot: Quarterly Arrivals from Japan")
+p2 <- ggseasonplot(myts[,2], year.labels=TRUE, year.labels.left=TRUE) +
+  theme(plot.title = element_text(hjust = 0.5)) +  ylab("Arrivals in thousands") +
+  ggtitle("Seasonal plot: Quarterly Arrivals from New Zealand")
+p3 <- ggseasonplot(myts[,3], year.labels=TRUE, year.labels.left=TRUE) +
+  theme(plot.title = element_text(hjust = 0.5)) +   ylab("Arrivals in thousands") +
+  ggtitle("Seasonal plot: Quarterly Arrivals from U.K.")
+p4 <- ggseasonplot(myts[,4], year.labels=TRUE, year.labels.left=TRUE) +
+  theme(plot.title = element_text(hjust = 0.5)) +   ylab("Arrivals in thousands") +
+  ggtitle("Seasonal plot: Quarterly Arrivals from U.S.")
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+**Below on top left is the subseriesplot for Japan, which shows the inverted-U shaped arrival patterns for each quarter, peaking in the middle of each quarterly period.**
+
+**To the right of Japan is below is the subseriesplot for New Zealand, which shows that in contrast to Japan, the trend within each quarter seems to be increasing, starting low in the beginning and peaking at the end of each quarter. This trend is a bit puzzling. While it is understandable that December would be the most popular month for Q4, it is less clear why there would be more tourists in June than in May or April in Q2, or in September than in August or July in Q3.**
+
+**Below Japan is the subseasonal plot for U.K., which is similar to the one above for New Zealand, except that the volume in each quarter peaks earlier than the end of the period. Again, it is not clear why this is the case for all quarters. For instance, it is certainly conceivable that tourists would prefer April over June in Q2 since it is warmer, but it is puzzling why there would be more tourists in November than in December, which is traditionally the most popular month in Australia for tourists.**
+
+**The U.S. subseries plot below shows more irregular pattern than the other countries. The peaks occur in the middle of each quarter for Q2 and Q3, but at the ends for Q1 and Q4. This makes sense for Q4, but not so for Q1 since one would expect January to be the most popular for U.S. tourists.**
+
+```{r fig.align='center', fig.width=10, fig.height=10}
+p1 <- ggsubseriesplot(myts[,1]) +
+  theme(plot.title = element_text(hjust = 0.5)) +  # to center the plot title+
+  ylab("Arrivals in thousands") +
+  ggtitle("Seasonal subseries plot: Japan")
+p2 <- ggsubseriesplot(myts[,2]) +
+  theme(plot.title = element_text(hjust = 0.5)) +  # to center the plot title+
+  ylab("Arrivals in thousands") +
+  ggtitle("Seasonal subseries plot: New Zealand")
+p3 <- ggsubseriesplot(myts[,3]) +
+  theme(plot.title = element_text(hjust = 0.5)) +  # to center the plot title+
+  ylab("Arrivals in thousands") +
+  ggtitle("Seasonal subseries plot: U.K.")
+p4 <- ggsubseriesplot(myts[,4]) +
+  theme(plot.title = element_text(hjust = 0.5)) +  # to center the plot title+
+  ylab("Arrivals in thousands") +
+  ggtitle("Seasonal subseries plot: U.S.")
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+
+## Question 2.10
+
+`dj` contains 292 consecutive trading days of the Dow Jones Index. Use `ddj <- diff(dj)` to compute the daily changes in the index. Plot ddj and its ACF. Do the changes in the Dow Jones Index look like white noise?
+
+**This question asks us to plot a diff chart for time series data.  The `diff()` function takes the difference between consecutive measurements, known as differencing.  Differencing can help stabilize the mean by removing or reducing trend and seasonality, which could leave only white noise so that a variety of models can be applied to the data.**
+
+**Below is the autoplot of ddj, the daily changes in the Dow Jones index. The plot shows that the changes occurred in random fashion, with higher magnitude changes occurring through the period.**
+
+```{r}
+head(dj)
+ddj <- diff(dj)
+autoplot(ddj) + ggtitle("Daily Changes in Dow Jones Index") + 
+  theme(plot.title = element_text(hjust = 0.5)) + # to center the plot title
+  xlab("292 Consecutive Trading Days") +
+  ylab("Daily Changes in %")
+```
+
+**Below is the acf chart of ddj, which shows no apparent patterns. As expected, with the exception of r_6, no other autocorrelation coefficients surpass the dotted blue line, which implies that the autocorrelations of daily changes are statistically zero at the 5% level. Regarding r_6 lying outside the bound, it is expected given the 5% significance level that 1 or 2 of the 25 observations would lie outside the 5% bound. Hence, the daily changes appear to be white noise.**
+
+```{r}
+ggAcf(ddj)
+```
+
+**On initial inspection of the ACF plot, we see that that results contain multiple lags being near the rule of thumb limit $\pm2/\sqrt{T}$, but ultimately that they are within the boundaries; therefore, using the `diff()` function results in data being 'stabalized', or containing only white noise.  As noted in the book, at a p-value of 0.05 one spike in 20 is not unexpected given the alpha value, which we can see here.**
+
+# Chapter 3: The Forecaster's Toolbox
+
+## Question 3.1
+
+For the following series, find an appropriate Box-Cox transformation in order to stabilise the variance.
+
+- usnetelec
+- usgdp
+- mcopper
+- enplanements
+
+**In this problem, we will be looking at stabilizing variance for various data sets using box-cox transformations.  The reason for doing this is that variance can scale with the predicted value, which makes it difficult to implement a model.  By applying a box-cox transformation, we are able to stabilize this variance, which basically means trying to keep it constant so that we can apply an appropriate model afterwards.  Fortunately, there is a function that chooses the appropriate <i>lambda</i> ($\lambda$) value (`BoxCox.lambda()`).**
+
+
+**Here we will use the `BoxCox.lambda()` function to find an optimal value, plot it, and compare it to the orginal time series. The Box-Cox parameter for usnetelec is 0.517 as shown below, which equates to the following square root transformation:**
+
+$$w_t = 2\cdot \big( \sqrt{y_t}-1\big)$$
+
+**At the first glance, the differences between the two graphs are very slight and the vicissitude of variance in the first graph appears to be minor, suggesting the Box-Cox transformation may not be necessary. At any rate, we can see that the differences among the magnitudes of the variance at various points along the X-axis have become less pronounced and the response values now appear more normally distributed.**
+
+* `usnetelec`
+  
+```{r}
+lambda <- BoxCox.lambda(usnetelec)
+p1 <- autoplot(usnetelec) + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Original")
+p2 <- autoplot(BoxCox(usnetelec, lambda)) + theme(plot.title = element_text(hjust = 0.5)) + ggtitle(paste("BoxCox =", round(lambda,3), sep = " "))
+grid.arrange(p1, p2, nrow = 1)
+```
+
+**The lambda value for usgdp is 0.366, which equates to roughly a third root transformation:**
+$$w_t = 3\cdot \big( y_t^{\frac{1}{3}}-1\big)$$
+
+**Similar to the above, the vicissitude of variance in the original autoplot appears minor and the graph looks virtually linear, indicating that the Box-Cox transformation is perhaps unnecessary. At any rate, the variance among the magnitudes in differences in y-values are less pronounced, and the graph looks more linear, making it easier to approximate the y-distribution using the Gaussian assumptions.**
+  
+* `usgdp`
+
+```{r}
+lambda <- BoxCox.lambda(usgdp)
+p1 <- autoplot(usgdp) + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Original")
+p2 <- autoplot(BoxCox(usgdp, lambda)) + theme(plot.title = element_text(hjust = 0.5)) + ggtitle(paste("BoxCox =", round(lambda,3), sep = " "))
+grid.arrange(p1, p2, nrow = 1)
+```
+
+**The lambda value for mcopper is 0.19, which equates to roughly a fifth root transformation:**
+
+$$w_t = 5\cdot \big( y_t^{\frac{1}{5}}-1\big)$$
+
+**To make response variable more amenable to normal distribution, the extreme values on the right tail have been reduced and the values on the left fat tail have been spread out more as shown below.**
+
+* `mcopper`
+
+```{r}
+lambda <- BoxCox.lambda(mcopper)
+p1 <- autoplot(mcopper) + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Original")
+p2 <- autoplot(BoxCox(mcopper, lambda)) + theme(plot.title = element_text(hjust = 0.5)) + ggtitle(paste("BoxCox =", round(lambda,3), sep = " "))
+grid.arrange(p1, p2, ncol = 2)
+```
+
+**Finally, the lambda value for enplanements is -0.227, which roughly equates to an inverse fifth root as follows:**
+
+$$w_t = -5\cdot \big( \frac{1}{y_t^{\frac{1}{5}}}-1\big)$$
+
+**In the graph below, although not very obvious, the extreme values on the right tail have been brought closer together to the center.**
+
+* `enplanements`
+
+```{r}
+lambda <- BoxCox.lambda(enplanements)
+p1 <- autoplot(enplanements) + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Original")
+p2 <- autoplot(BoxCox(enplanements, lambda)) + theme(plot.title = element_text(hjust = 0.5)) + ggtitle(paste("BoxCox =", round(lambda,3), sep = " "))
+grid.arrange(p1, p2, ncol = 2)
+```
+
+**From this analysis, we can see that one property of Box Cox transformations is tha they try to find the best lambda value that linearizes the data.  The best examples of this are in the `usnetelec` and `usgdp` data sets.  Good examples of variance getting stablized in the seasonal patterns are in the `mcopper` and `enplanements` graphs.**
+
+## Question 3.8
+
+For your retail time series (from Exercise 3 in Section 2.10):
+
+**In this excersise we will be evaluating the prediction accuracy from a previous exercise.  We will be using the `accuracy` function which returns an array of error measurements of training and test data.**
+
+  a. Split the data into two parts using
+
+```{r 3.8}
+myts <- ts(retaildata[,"A3349335T"],frequency=12, start=c(1982,4))
+myts.train <- window(myts, end=c(2010,12))
+myts.test <- window(myts, start=2011)
+train_temp <- data.frame(unclass(myts.train),"train")
+test_temp <- data.frame(unclass(myts.test),"test")
+```
+
+  b. Check that your data have been split appropriately by producing the following plot.
+
+**We use workaround using data tables and ggplot instead due to the bug in ffp causing autolayer to not accept time series objects**
+
+```{r}
+# autoplot(myts) +
+#   autolayer(myts.train, series="Training") +
+#   autolayer(myts.test, series="Test")
+
+colnames(train_temp) <- c("value","type")
+colnames(test_temp) <- c("value","type")
+temp <- rbind(train_temp,test_temp)
+newdf2 = data.table(YearMonth = seq(as.Date("1982/4/1"), by = "month", length.out = 381),temp)
+ggplot(newdf2,aes(YearMonth,value, color=type)) + geom_line()
+
+```
+
+  c. Calculate forecasts using snaive applied to myts.train.
+
+```{r}
+fc <- snaive(myts.train)
+```
+
+  d. Compare the accuracy of your forecasts against the actual values stored in myts.test.
+
+```{r}
+accuracy(fc, myts.test)
+```
+
+  e. Check the residuals.
+  
+    Do the residuals appear to be uncorrelated and normally distributed?
+    
+**No, they do not.  The ACF plot indicates many lags fall outside of the limit.  Also, there is a noticeable trend in the lags; they are decreasing and appear to have a sinusoidal pattern, indicating there is an uncaptured trend and sesonality/cyclicity pattern.  Additionally, the Ljung box test returns a p-value below the critical level (0.05) which indicates there are still autocorrelations within the residuals.  As for normality, the requirements do not appear to be met either as the distribution does not appear to be centered around zero and looks like it is skewed left but also with a large positive outlier.**
+
+```{r}
+checkresiduals(fc)
+```
+
+  f. How sensitive are the accuracy measures to the training/test split?
+  
+**One way of testing this question is to try sets of different training/test splits**
+    
+```{r fig.width=10, fig.height=10}
+l_t <- list()
+ind_t <- 1
+for(i in 2005:2013) {
+  for(j in 1:12) {
+    l_t[[ind_t]] = c(i, j)
+    ind_t <- ind_t + 1
+  }
+}
+
+df <- data.frame()
+for(i in 1:(length(l_t)-1)) {
+    myts.train <- window(myts, end=c(l_t[[i]][1],l_t[[i]][2]))
+    myts.test <- window(myts, start=c(l_t[[i + 1]][1], l_t[[i + 1]][2]))
+    fc <- snaive(myts.train)
+    df <- rbind(df, cbind(stack(accuracy(fc,myts.test)[1,]), year = l_t[[i]][1], month=l_t[[i]][2], index=i, data_set = 'train'))
+    df <- rbind(df, cbind(stack(accuracy(fc,myts.test)[2,]), year = l_t[[i]][1], month=l_t[[i]][2], index=i, data_set = 'test'))
+}
+
+# df$date <- base::as.Date(paste0(df$year,"-",str_pad(df$month, 2, pad="0"),"-",'01'))
+df$date <- base::as.Date(paste0(df$year,"-",str_pad(df$month, 2, pad="0"),"-",'01'), "%Y-%m-%d")
+
+p1 <- ggplot(df[df$ind=='ME',], aes(x=date, y=values, color=data_set)) + geom_line() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("ME") + scale_x_date(date_breaks = '2 year', labels = date_format('%Y'))
+p2 <- ggplot(df[df$ind=='RMSE',], aes(x=date, y=values, color=data_set)) + geom_line() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("RMSE") + scale_x_date(date_breaks = '2 year', labels = date_format('%Y'))
+p3 <- ggplot(df[df$ind=='MAE',], aes(x=date, y=values, color=data_set)) + geom_line() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("MAE") + scale_x_date(date_breaks = '2 year', labels = date_format('%Y'))
+p4 <- ggplot(df[df$ind=='MPE',], aes(x=date, y=values, color=data_set)) + geom_line() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("MPE") + scale_x_date(date_breaks = '2 year', labels = date_format('%Y'))
+p5 <- ggplot(df[df$ind=='MAPE',], aes(x=date, y=values, color=data_set)) + geom_line() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("MAPE") + scale_x_date(date_breaks = '2 year', labels = date_format('%Y'))
+p6 <- ggplot(df[df$ind=='MASE',], aes(x=date, y=values, color=data_set)) + geom_line() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("MASE") + scale_x_date(date_breaks = '2 year', labels = date_format('%Y'))
+p7 <- ggplot(df[df$ind=='ACF1',], aes(x=date, y=values, color=data_set)) + geom_line() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("ACF1") + scale_x_date(date_breaks = '2 year', labels = date_format('%Y'))
+p8 <- ggplot(df[df$ind=="Theil's U",], aes(x=date, y=values, color=data_set)) + geom_line() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Theil's U") + scale_x_date(date_breaks = '2 year', labels = date_format('%Y'))
+grid.arrange(p1, p2, p3, p4, p5, p6, p7, p8, ncol=2)
+```
+
+**For a simple thought exercise, here we ran an array of training/test splits to see how the various error rates changed due to the selected groupings.  In this example, we have set the total data to be the same lenght in all trials but only varied the boundary date for the training/test sets.  The first thing we notice is that the error is very sensitive when we pick a boundary date between 2011 and 2012.  It appears this may be due an apparent shifting trend that happens around that time.  Also, the further back in the training set we pick, the more 'averaged' the errors become, which means we may have overall better performance, but not better performance for the most recent predictions.  As discussed in the reading, the further out a prediction is from the trained model, the greater the uncertainty that surrounds it.**
+
+# Chapter 6: Time Series Decomposition
+
+## Question 6.2
+
+**This example will cover methods to do multiplicative decomposition as well as evaluation of trend, season, and cyclical patterns.  Additionally, we will investigate the influence that a single outlier has on the data.**
+
+The `plastics` data set consists of the monthly sales (in thousands) of product A for a plastics manufacturer for five years.
+
+a. Plot the time series of sales of product A. Can you identify seasonal fluctuations and/or a trend-cycle?  
+
+**There definitely appears to be seasonal fluctuations in the data which appear to have relatively constant variance over the visible time period.  There also does appear to be a positive trend; however, due to the large relative variance in the seasonlity, the actual significance of the trend may not be as large as indicated.**
+
+```{r}
+autoplot(plastics)
+```
+
+b. Use a classical multiplicative decomposition to calculate the trend-cycle and seasonal indices.
+
+**The generated plot shows that a strong seasonal pattern has been captured.  Additionally, a trend component has also been captured that is increasing over time, but starts to decrease at the end. It does not appear that the remainder component is completely random (some cyclical nature); however, further analysis is required.**
+
+```{r}
+plastics %>% 
+  decompose(type='multiplicative') -> plastics_decomp 
+autoplot(plastics_decomp)
+```
+
+c. Do the results support the graphical interpretation from part a?  
+
+**The results do appear to aggree with our interpretation.  The trend does appear to be significant enough to be captured by this method, and the variance of the seasonality was definitely captured.  However, it appears there is some sinusoidal pattern that is still present in the remainder, so this might not be the best type of fit.  From the intial inspection, it appeared the variance was fairly constant, in which case, an additive model should be used.  From the output below, we see that an additive model does a similar, and possibly better, job which is consistent with the initial graphical interpretation. **
+  
+```{r}
+plastics %>% 
+  decompose(type='additive') -> plastics_decomp_2 
+autoplot(plastics_decomp_2)
+```
+
+d. Compute and plot the seasonally adjusted data.
+
+**As noted above, it is unclear whether an additive or multiplicative forecasting method should be used.  Therefore, we will show plots of both processes for the following sections for this problem.  For both options, the general trrend remains the same; there is as an overall increase in the values which then starts to decrease at the end.  In fact, both results are very similar to each other in this visualizaion.**
+
+```{r}
+plastics_seasadj_m <- plastics_decomp %>% seasadj()
+plastics_seasadj_a <- plastics_decomp_2 %>% seasadj()
+
+autoplot(ts.union('multiplicative' = plastics_seasadj_m, 'additive' = plastics_seasadj_a))
+```
+
+e. Change one observation to be an outlier (e.g., add 500 to one observation), and recompute the seasonally adjusted data.  What is the effect of the outlier?  
+
+**In the below chart, we can generate mutliple samples of outlier locations.  Here we can see that the seasonally adjusted plots appear to have absorbed much of the additional value, which was not accidentally captured as a pattern.  However, the value change of 500 is very drastic, so it does have some significant disturbance to the remaining plotted points.  As explained in the following response, there does not appear to be an equal response to point at which the outlier occurs.**
+
+```{r}
+set.seed(2345245)
+n_samples <- 25
+plastics_l_loc <- list()
+plastics_l_data <- list()
+ind_t <- 1
+
+random_locations <- sample(seq(1, length(plastics), 1), n_samples, replace = FALSE)
+
+for(j in random_locations){
+  plastics_t <- plastics
+  plastics_t[j] =  plastics_t[j] + 500
+  plastics_decomp_m_t <- plastics_t %>% decompose(type='multiplicative')
+  plastics_seasadj_m_t <- plastics_decomp_m_t %>% seasadj()
+  plastics_l_loc[[ind_t]] <- j
+  plastics_l_data[[ind_t]] <- plastics_seasadj_m_t
+  ind_t <- ind_t + 1
+}
+
+df <- data.frame()
+for(i in 1:length(plastics_l_loc)) {
+  df_t <- data.frame()
+  df_t <- cbind('order' = i, 'location' = plastics_l_loc[[i]], 'ind' =  seq(1, 60, 1), 'value' = data.frame('value' = c(as.matrix(plastics_l_data[[i]]))))
+  df <- rbind(df, df_t)
+}
+
+df <- rbind(df, data.frame('order' = 0, 'location' = 0, 'ind' =  seq(1, 60, 1), 'value' = data.frame('value' = c(as.matrix(plastics_seasadj_m)))))
+
+ggplot(df[(df$location>0 & df$location<65)|df$location==0,], 
+       aes(x=ind, y=value, color=factor(location))) + 
+  geom_line(aes(size=factor(location))) + 
+  scale_size_manual(values = c(2, rep(0.5,59))) + 
+  facet_grid(~factor(ifelse(location<15,1,ifelse(location<45,2,3))))
+```
+
+f. Does it make any difference if the outlier is near the end rather than in the middle of the time series?  
+
+**It seems like the seasonally adjusted data is more influenced by outliers in the middle, since the whole time series appears to be affected whereas outliers at the beggining or end of time series do not appear to have as siginficant of an affect on many of the other points.  Perhaps it could be due to the fact that an outlier in the middle could make the data seem more sinusoidal than it really is; however, that would require further research and analysis to prove.**
+  
+## Question 6.6
+
+**In this problem, we will walk through an STL decomposition, experiment with various parameters, and compare naive vs robust models.**
+
+We will use the `bricksq` data (Australian quarterly clay brick production. 19561994) for this exercise.
+
+a. Use an STL decomposition to calculate the trend-cycle and seasonal indices. (Experiment with having fixed or changing seasonality.)
+  Note, the `t.window` and `s.window` parameters must be odd
+  
+**In order to get the full benefit of this excersize, fixed and changing seasonal plots have been provided.  Odd numbers must be provided so that simple moving averages can be produced.  We can see that the changing seasonality method has definitely detected a varying component. However, the scale of the remainder seems about the same so it doesn't seem like a guarantee that this changing seasonality method is definitely better.**
+  
+```{r}
+fixed_t_window=11
+changing_t_window=11
+changing_s_window=7
+bricksq %>% 
+  stl(t.window=fixed_t_window, s.window = 'periodic') -> bricksq_stl_fixed 
+
+bricksq_stl_fixed %>% autoplot() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Fixed Seasonality")
+
+bricksq %>% 
+  stl(t.window=changing_t_window, s.window = changing_s_window) -> bricksq_stl_changing
+
+bricksq_stl_changing %>% autoplot() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Changing Seasonality")
+```
+
+b. Compute and plot the seasonally adjusted data.
+
+**Here we can see that the difference between the fixed and changing seasonality methods is very small.  They both capture an increase at the beggining with then some large non-seasonal variations throughout the remaining years.**
+
+```{r}
+autoplot(
+  ts.union(
+    'Fixed Seasonality' = bricksq_stl_fixed %>% seasadj(), 
+    'Changing Seasonality' = bricksq_stl_changing %>% seasadj()
+  )
+)
+```
+
+c. Use a naive method to produce forecasts of the seasonally adjusted data.
+
+**It appears the changing seasonality prediction interval is slightly smaller than the fixed seasonality.  Perhaps this is a result of the magnitude of the last seasons variability is smaller in this case than the fixed seasonilty model.  However, as noted above, both models have very similar otucomes and it is difficult to decide which is doing a better job of prediction.**
+
+```{r}
+bricksq_stl_fixed %>% 
+  seasadj() %>% 
+  naive() -> bricksq_stl_fixed_naive
+
+bricksq_stl_changing %>% 
+  seasadj() %>% 
+  naive() -> bricksq_stl_changing_naive
+
+p1 <- bricksq_stl_fixed_naive %>% autoplot() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Fixed Seasonality")
+p2 <- bricksq_stl_changing_naive %>% autoplot() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Changing Seasonality")
+grid.arrange(p1, p2, ncol=1)
+```
+
+d. Use `stlf()` to reseasonalise the results, giving forecasts for the original data.
+
+**As noted above, the changing seasonality prediction interval appears to be more narrow than the fixed seasonality; however, both predictions themseles appear to be very similiar.**
+
+```{r}
+bricksq_stlf_fixed_naive <- stlf(bricksq, method='naive', t.window=fixed_t_window, s.window='periodic')
+bricksq_stlf_changing_naive <- stlf(bricksq, method='naive', t.window=changing_t_window, s.window=changing_s_window) 
+
+p1 <- bricksq_stlf_fixed_naive %>% autoplot() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Fixed Seasonality")
+p2 <- bricksq_stlf_changing_naive %>% autoplot() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Changing Seasonality")
+grid.arrange(p1, p2, ncol=1)
+```
+
+e. Do the residuals look uncorrelated?  
+
+  **Plot Fixed Seasonality Residuals**
+```{r}
+checkresiduals(bricksq_stlf_fixed_naive)
+```
+
+  **Plot Changing Seasonality Residuals**
+```{r}
+checkresiduals(bricksq_stlf_changing_naive)
+```
+
+  **No, the results do not look uncorrelated.  Both methods show that there are outliers in the ACF plots and the residusal distributions appear to have a left skew.  Additionally, neither test passes a Box-Ljung test using a significance level of p = 0.05**
+
+f. Repeat with a robust STL decomposition. Does it make much difference?
+
+```{r}
+bricksq_stlf_fixed_naive_robust <- stlf(bricksq, method='naive', t.window=fixed_t_window, s.window='periodic', robust = TRUE)
+bricksq_stlf_changing_naive_robust <- stlf(bricksq, method='naive', t.window=changing_t_window, s.window=changing_s_window, robust = TRUE) 
+
+p1 <- bricksq_stlf_fixed_naive_robust %>% autoplot() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Fixed Seasonality")
+p2 <- bricksq_stlf_changing_naive_robust %>% autoplot() + theme(plot.title = element_text(hjust = 0.5)) + ggtitle("Changing Seasonality")
+grid.arrange(p1, p2, ncol=1)
+```
+
+  **Plot Fixed Seasonality Residuals**
+```{r}
+checkresiduals(bricksq_stlf_fixed_naive_robust)
+```
+
+  **Plot Changing Seasonality Residuals**
+```{r}
+checkresiduals(bricksq_stlf_changing_naive_robust)
+```
+
+  **Using STL decomposition does make some difference.  It appears that this method does try to reduce autocorrelation better because the skew is slightly reduced, with large values on both sides, and the ACF plot looks much more closer to passing.  However, these tests, and the Box-Ljung test still indicate that the residuals are not white noise.**
+
+g. Compare forecasts from stlf() with those from snaive(), using a test set comprising the last 2 years of data. Which is better?
+
+```{r}
+bricksq.train <- window(bricksq, end=c(1992, 3))
+bricksq.test <- window(bricksq, start=c(1992, 4))
+```
+
+```{r}
+bricksq_snaive_train <- snaive(bricksq.train)
+bricksq_stlf_changing_naive_robust_train <- stlf(bricksq.train, method='naive', t.window=changing_t_window, s.window=changing_s_window, robust = TRUE)
+```
+
+  **Plot snaive accuracy and residuals**
+```{r}
+accuracy(bricksq_snaive_train,bricksq.test)
+checkresiduals(bricksq_snaive_train)
+```
+
+  **Plot stlf accuracy and residuals**
+```{r}
+accuracy(bricksq_stlf_changing_naive_robust_train,bricksq.test)
+checkresiduals(bricksq_stlf_changing_naive_robust_train)
+```
+
+  **The ACF plot for the `snaive()` model shows a sinusoidal wave which, unsurprisingly, indicates a seasonal component in the predictions is missing.  While that does appear to the be the case for the `stlf()` model, it is much less reduced.  Overall, the mangnitude of the residuals for the`stlf()` plot are less but it is still slightly left skewed, as is the `snaiv()` model.  Having said that, all test set errors for the `stlf()` model are superior to the `snaive()`.  Unfortunately though both models still do not pass the box test so it seems a better fit can be made.**
+
+# Chapter 7: Exponential Smoothing
+
+## Question 7.5
+
+**This question asks us to predict the next four days of book sales.  We will evaluate the data, make a forecast using simple exponential smoothing, and evaluating the goodness of fit.**
+
+Data set `books` contains the daily sales of paperback and hardcover books at the same store. The task is to forecast the next four days sales for paperback and hardcover books.
+
+a. Plot the series and discuss the main features of the data.
+
+**The main features of the series are that the sales of both types of books share an increasing trend. However, the paperback sales trend is leveling off more than the hardcover sales in the second half of the series. They may have different seasonalities or cycles.**
+
+
+```{r 7.5a}
+
+autoplot(books)
+```
+
+b. Use the `ses()` function to forecast each series, and plot the forecasts.
+
+**The 4-day flat forecast for the paperback sales is a little higher than 200 units while the hardcover sales forecast is near 250 units. When the historical sales are plotted on different charts, we can clearly see that these book types have different cycles and/or seasonalities. The fitted simple exponential smoothing for the hardcover sales has a steeper slope than the paperback sales. The larger paperback confidence internals indicate that there is more uncertainty in this forecast.**
+
+```{r 7.5b, fig.height=9}
+paperbacks <- books[, "Paperback"]
+hardcovers <- books[, "Hardcover"]
+
+paperbacks_fc <- ses(paperbacks, h = 4)
+hardcovers_fc <- ses(hardcovers, h = 4)
+
+gridExtra::grid.arrange(
+  autoplot(paperbacks_fc) + 
+    autolayer(fitted(paperbacks_fc), series = "Fitted") +
+    ylab("Sales") + xlab("Days") + ggtitle("Paperbacks 4-Day Forecast"),
+  autoplot(hardcovers_fc) + 
+    autolayer(fitted(hardcovers_fc), series = "Fitted") +
+    ylab("Sales") + xlab("Days") + ggtitle("Hardcovers 4-Day Forecast"),
+  nrow = 2
+)
+```
+
+
+c. Compute the RMSE values for the training data in each case.
+
+**As we would expect given the larger paperback sales confidence intervals shown above, the fit for the paperback sales has a larger root mean-squared error at 33.6 than the fit for the hardcovers at 31.9.**
+
+```{r 7.5c}
+accuracy(paperbacks_fc)
+accuracy(hardcovers_fc)
+```
+
+## Question 7.6
+
+
+a. Now apply Holt's linear method to the `paperback` and `hardback` series and compute four-day forecasts in each case.
+
+ **It is evident in the results below that Holt's Linear Trend Method, in comapison to SES method, does not apply a naive forecasting methodology. Both the `paperback` and `hardcover` series were trending upwards and this behaviour was captured by Holt's Method. The $\beta$ parameter (that was automatically selected) was very small for both series, meaning that the rate of increase of sales changes very slowly over time. The increasing trend is more evident in the `hardcover` series. While it is a good thing that the general trend of the data is reflected in the forecast, the results based on Holt's method should be taken with a grain of salt. Having an increase in sales for 4 consecutive days did not occur in the historical period, therefore the results seem a bit optimistic. This is because Holt's method assume that the increasing trend continues unimpeded into the future.**
+ 
+```{r 7.6a, fig.height=9}
+
+paperbacks_holts_lt_fc <- holt(paperbacks, h=4)
+hardcovers_holts_lt_fc <- holt(hardcovers, h=4)
+
+gridExtra::grid.arrange(
+  autoplot(paperbacks_holts_lt_fc) + 
+    autolayer(fitted(paperbacks_holts_lt_fc), series = "Fitted") +
+    ylab("Sales") + xlab("Days") + ggtitle("Paperbacks 4-Day Forecast: Holts Linear Trend Method"),
+  autoplot(hardcovers_holts_lt_fc) + 
+    autolayer(fitted(hardcovers_holts_lt_fc), series = "Fitted") +
+    ylab("Sales") + xlab("Days") + ggtitle("Hardcovers 4-Day Forecast: Holts Linear Trend Method"),
+  nrow = 2
+)
+```
+
+**Paperbacks model parameters:**
+
+```{r 7.6ap}
+paperbacks_holts_lt_fc$model$par
+```
+
+
+**Hardcovers model parameters:**
+
+```{r 7.6ah}
+hardcovers_holts_lt_fc$model$par
+```
+
+b. Compare the RMSE measures of Holt's method for the two series to those of simple exponential smoothing in the previous question. (Remember that Holt's method is using one more parameter than SES.) Discuss the merits of the two forecasting methods for these data sets.
+
+**RMSE of Holt's Method & SES: **
+
+```{r 7.6b}
+acc_paperbacks_ses <- accuracy(paperbacks_fc)
+acc_hardcovers_ses <- accuracy(hardcovers_fc)
+acc_paperbacks_holt <- accuracy(paperbacks_holts_lt_fc)
+acc_hardcovers_holt <- accuracy(hardcovers_holts_lt_fc)
+
+df_rmse <- data.frame("Paperbacks Holt" = acc_paperbacks_holt[2][1],
+                      "Paperbacks SES" = acc_paperbacks_ses[2][1],
+                      "Hardcovers Holt" = acc_hardcovers_holt[2][1],
+                      "Hardcovers SES" = acc_hardcovers_ses[2][1])
+
+df_rmse
+```
+
+**The RMSE for Holt's method is more than 2 points lower for both the `paperback` and `hardback` series. Both methods were designed for situations where observations in the distant past are least likely to affect the forcast than observations closer to the present. This is a plausible situation for these series. The series are both trending upwards at different rates, Holt's method has an additional trend parameter that captures this behaviour, but the SES method does not. However, Holt's method assume that the trend continues indefinitely into the future with no fluctuation or change, which is rarely the case.**
+
+c. Compare the forecasts for the two series using both methods. Which do you think is best?
+
+**The SES forecasts assumes a naive approach (based on the point forecast) beyond the first forecasted day, which is a bit concerning given that the historical data did not show this behavior. Holt's method captures the overall increasing trend of both series. It assumes that this increase continues infinitely into the future. This seems a bit optimistic but may not be a huge concern for a 4 day forecast. I would say that Holt's forecasts are better because it considers the overall trend of the data and it has better RMSE values. Tables displaying the forecasts for each series are below.**
+
+**Paperbacks forecasts:**
+
+```{r 7.6Paperbackfc}
+paperback_fc_df <- data.frame("SES Point Forecast" = paperbacks_fc$mean,
+                              "SES 95 Lower" = paperbacks_fc$lower[,2],
+                              "SES 95 Upper" =  paperbacks_fc$upper[,2],
+                              "Holts Point Forecast" = paperbacks_holts_lt_fc$mean,
+                              "Holts 95 Lower" = paperbacks_holts_lt_fc$lower[,2],
+                              "Holts 95 Upper" = paperbacks_holts_lt_fc$upper[,2])
+
+paperback_fc_df
+```
+
+**Hardcovers Forecasts:**
+
+```{r 7.6Hardbackfc}
+hardcovers_fc_df <- data.frame("SES Point Forecast" = hardcovers_fc$mean,
+                               "SES 95 Lower" = hardcovers_fc$lower[,2],
+                              "SES 95 Upper" = hardcovers_fc$upper[,2],
+                              "Holts Point Forecast" = hardcovers_holts_lt_fc$mean,
+                              "Holts 95 Lower" = hardcovers_holts_lt_fc$lower[,2],
+                              "Holts 95 Upper" = hardcovers_holts_lt_fc$upper[,2])
+hardcovers_fc_df["SES Point Forecast"] <- (hardcovers_fc_df$SES.95.Lower + hardcovers_fc_df$SES.95.Upper)/2
+hardcovers_fc_df
+```
+
+d. Calculate a 95% prediction interval for the first forecast for each series, using the RMSE values and assuming normal errors. Compare your intervals with those produced using `ses` and `holt`.
+
+**The table below shows the resutling 95% prediction intervals. It is evident that the intervals based on the RMSE is narrower than the intervals generated by models. Holt's method also produce narrower intervals than SES due to its lower RMSE values **
+
+
+**95% RMSE Prediction Interval**
+
+```{r 7.6d}
+ci_rmse_df <- data.frame("Paperbacks SES" = paste0("[ ", paperbacks_fc$mean[1] - 1.96 * df_rmse$Paperbacks.SES,", ",paperbacks_fc$mean[1] + 1.96 * df_rmse$Paperbacks.SES," ]" ),
+                         "Paperbacks Holt" = paste0("[ ", paperbacks_holts_lt_fc$mean[1] - 1.96 * df_rmse$Paperbacks.Holt, ", ", paperbacks_holts_lt_fc$mean[1] + 1.96 * df_rmse$Paperbacks.Holt, " ]"),
+                         "Hardcovers SES" = paste0("[ ", hardcovers_fc$mean[1] - 1.96 * df_rmse$Hardcovers.SES, ", ", hardcovers_fc$mean[1] + 1.96 * df_rmse$Hardcovers.SES, " ]"),
+                         "Hardcovers Holt" = paste0("[ ", hardcovers_holts_lt_fc$mean[1] - 1.96 * df_rmse$Hardcovers.Holt, ", ", hardcovers_holts_lt_fc$mean[1] + 1.96 * df_rmse$Hardcovers.Holt, " ]"))
+
+ci_rmse_df
+```
+
+
+
+
+## Question 7.10
+**In this problem, we will analyze a data set of vehicle production and analyze various requested models against each other on their forecast predictions for the next two years.**
+
+For this exercise use data set `ukcars`, the quarterly UK passenger vehicle production data from 1977Q12005Q1.
+
+a. Plot the data and describe the main features of the series.
+
+**The time series definitely appears to have a seasonality component.  A little less obvious is whether there is a trend or cyclicity.  While it looks like the data is trending up from 1980 to 2000, it also seems like this might be part of a larger cycle with an upturn around 1983 and a downturn around 2000.**
+
+```{r}
+autoplot(ukcars)
+```
+
+b. Decompose the series using STL and obtain the seasonally adjusted data.
+
+**As shown below, the seasonal component found by the sub-series smoothing of loess is clearly evident. In the trend subplot and the seasonality adjusted plot, removing this seasonality makes the trend more apparent. Removing the seasonality and trend, the remainder appears more or less random around 0, as expected. **
+
+```{r}
+stl_adj <- stl(ukcars, s.window = "periodic")
+autoplot(stl_adj)
+
+# seasonally-adjusted series using the command seasadj
+seasonally_adj <- seasadj(stl_adj)
+autoplot(seasonally_adj)
+```
+
+c. Forecast the next two years of the series using an additive damped trend method applied to the seasonally adjusted data. (This can be done in one step using `stlf()` with arguments `etsmodel="AAN", damped=TRUE`.)
+
+**As implied, we use the additive model with damped trend since the magnitute of the seasonal pattern seems to stay the same through various levels of the trend. As suggested, we use the `stlf()` command, and observe a path of the forecast for the next two years. Rather than giving a point estimate for the whole forecast range, it produces a forecast path of the stochastic process.**
+
+**Note that because the `autolayer()` gave errors relating to the data format (which appears to be a bug in the forecast package), in our code, we put the time series and forecast data into a data table and produce the desired plot using `ggplot2` package.**
+
+```{r}
+additive_damped <- stlf(ukcars, etsmodel="AAN", damped=TRUE)
+ukcardata <- data.frame(unclass(ukcars),"Historical")
+
+# put it into a data frame for simultaneous plotting
+temp <- data.frame(unclass(additive_damped[[2]]),"Forecast")
+colnames(ukcardata) <- c("value","type")
+colnames(temp) <- c("value","type")
+temp_ <- rbind(ukcardata,temp)
+additive_df = data.table(YearQtr = seq(as.Date("1977/1/1"), by = "quarter", length.out = 121),
+                         temp_)
+ggplot(additive_df,aes(YearQtr,value, color=type)) + geom_line()
+
+print(paste0("Point estimate using Holt's damped method: ", mean(additive_df$value[114:length(additive_df)])))
+#autoplot(ukcars) +  autolayer(additive_damped, PI=FALSE)
+```
+
+d. Forecast the next two years of the series using Holt's linear method applied to the seasonally adjusted data (as before but with `damped=FALSE`).
+
+**Below shows the historical and forecast time series under the Holt's linear method, as well as the point estimate for the 2-year forecast. The output looks very similar to the damped method above, except that the point estimate appears to be marginally higher. This is expected since the there is an upward trend in the historical time series data, which figures into the linear method.**
+
+**Note: Similar to Part (c) above, the `autolayer()` method gave rise to errors relating to the data format, so we used an alternative approach based on data tables and `ggplot()` method to get the plot.**
+
+```{r}
+holt_linear <- stlf(ukcars, etsmodel="AAN", damped=FALSE)
+
+temp2 <- data.frame(unclass(holt_linear[[2]]),"Forecast")
+colnames(temp2) <- c("value","type")
+temp2 <- rbind(ukcardata,temp2)
+holt_linear_df = data.table(YearQtr = seq(as.Date("1977/1/1"), by = "quarter", length.out = 121),
+                            temp2)
+ggplot(holt_linear_df,aes(YearQtr,value, color=type)) + geom_line()
+
+print(paste0("Point estimate using Holt's linear method: ", mean(additive_df$value[114:length(holt_linear_df)])))
+
+#autoplot(ukcars) + autolayer(holt_linear, PI=FALSE)
+```
+
+e. Now use `ets()` to choose a seasonal model for the data.
+
+**Again, the plot appears similar to the two Holt's damped and linear output above. The `ETS()` produces a marginally higher point estimate for the forecast at 334, which is expected given the trend in the historical time series.**
+
+**As noted above, rather than `autolayer()`, we used `ggplot()` to produce the desired output below due to the apparent bug in the package for the method call.**
+
+
+```{r}
+ets_model <- ets(ukcars)
+temp3 <- data.frame(unclass(forecast(ets_model)[[2]]),"Forecast")
+colnames(temp3) <- c("value","type")
+temp3 <- rbind(ukcardata,temp3)
+ets_model_df = data.table(YearQtr = seq(as.Date("1977/1/1"), by = "quarter", length.out = 121),
+                            temp3)
+ggplot(ets_model_df,aes(YearQtr,value, color=type)) + geom_line()
+
+print(paste0("Point estimate using `ETS()`: ", mean(ets_model_df$value[114:length(ets_model_df)])))
+
+```
+
+f. Compare the RMSE of the ETS model with the RMSE of the models you obtained using STL decompositions. Which gives the better in-sample fits?
+
+**It appears that holt_linear (Holt's Linear Method) performs marginally the best out of the three in terms of the RMSE. **
+
+```{r}
+accuracy(ets_model)
+accuracy(additive_damped)
+accuracy(holt_linear)
+```
+
+g. Compare the forecasts from the three approaches? Which seems most reasonable?
+**From the chart below, it is hard to tell which forecasts offer superior results. However, from the RMSE analysis above, fcastHolt could be chosen on that basis. Intuitively, this makes sense given the trend in the historical data that we would like to incorporate in the model with the linear model.**
+
+```{r}
+holt_df <- additive_df
+holt_df$linear <- 0
+holt_df$linear <- holt_linear_df$value
+holt_df$ets <- 0
+holt_df$ets <- ets_model_df$value
+ggplot(holt_df,aes(YearQtr)) + 
+  geom_line(aes(y = value, colour = "Holt - Damped")) + 
+  geom_line(aes(y = linear, colour = "Holt - Linear")) +
+  geom_line(aes(y = ets, colour = "ETS Model"))
+
+#autoplot(ukcars) +
+#  autolayer(additive_damped, PI=FALSE, series="Damped Holt's") +
+#  autolayer(holt_linear, PI=FALSE, series="Holt's") +
+#  autolayer(forecast(ukcars_ets_models), PI=FALSE, series="ETS")
+```
+
+
+h. Check the residuals of your preferred model.
+**As discussed above, we first proceed with the Holt's Linear method. However, from the ACF chart, we see some evidence of autocorrelation at some of the lags. Below that, we have the analysis of the ETS method, which appears to have fewer autocorrelations, although it does have a slightly higher RMSE. For this reason, we would choose the ETS as our preferred model**
+```{r}
+checkresiduals(holt_linear)
+checkresiduals(ets_model)
+```
+
+# Chapter 8: ARIMA Models
+
+## Question 8.1
+
+Figure 8.31 shows the ACFs for 36 random numbers, 360 random numbers and 1,000 random numbers.
+
+a. Explain the differences among these figures. Do they all indicate that the data are white noise?
+
+**The difference is that the critical values for significant autocorrelations are lower for larger number of observations. Yes, they all indicate that the data are white noise.**
+
+b. Why are the critical values at different distances from the mean of zero? Why are the autocorrelations different in each figure when they each refer to white noise?
+
+**The critical values are at different distances from zero because of the different numbers of observations. The more observations, the smaller the variance for the sample autocorrelation. This leads to lower thresholds for checking if estimates are noisy for larger data samples. Mathematically, the bounds can be represented as follows**
+
+$$\pm \frac{z_{critical}}{\sqrt{n}}$$
+**where $z_{critical}$ is the z-score corresponding to a specific significance level (for instance, 1.96 for 5% significance) and n is the sample size. **
+
+## Question 8.2
+
+A classic example of a non-stationary series is the daily closing IBM stock price series (data set ibmclose). Use R to plot the daily closing prices for IBM stock and the ACF and PACF. Explain how each plot shows that the series is non-stationary and should be differenced.
+
+**Based on the charts below, there are several telltale signs of non-stionarity. For one, the time series graph below shows a strong degree of autocorrelation among daily close prices. Next, the ACF value at r1 is large (at about 1) and is decreasing very slowly (from the value at r1 of about 1 to over 0.75 at 26 lags), suggesting a non-stationary data. Finally, PACF for lag 1 is almost 1, indicating an AR(1) for the data, and suggests a differencing to derive a stationary process.**
+
+```{r}
+ggtsdisplay(ibmclose)
+```
+
+## Question 8.7
+
+Consider wmurders, the number of women murdered each year (per 100,000 standard population) in the United States.
+
+a. By studying appropriate graphs of the series in R, find an appropriate ARIMA(p,d,q) model for these data.
+
+
+**Let's follow the book's flowchart for ARIMA model selection.**
+
+**The line graph of the series shows the steep rise in the number of female murders in the 1960s. The volume remained at this elevated level with some some dips throughout the 1970s and 80s. The 1990s brought a dramatic decline. Apart from a temporary increase in the early 2000s, the decline appears to continue. There does not appear to be any unusual observations.**
+
+**There also does not appear to heteroscedasticity, i.e the variance does not change.**
+
+```{r}
+autoplot(wmurders)
+```
+
+
+**Our times series seems to have a trend, which means that it is not stationary. When we run the  Kwiatkowski-Phillips-Schmidt-Shin test for stationarity, the original data have a test statistic is statistically significant at a confidence level greater than 97.5%, which indicates that we reject the null hypothesis of stationarity. Thus, we will start differencing the series until we get to stationarity.**
+
+```{r}
+wmurders  %>% urca::ur.kpss() %>% summary()
+```
+
+
+**After taking the first difference, the plot of the series below still shows a trend, and the KPSS test statistic is still significant at a 95% confidence level. Let's try the second differencing.**
+
+```{r}
+wmurders_d1 <- wmurders %>% diff()
+wmurders_d1 %>% autoplot()
+wmurders_d1 %>% urca::ur.kpss() %>% summary() 
+```
+
+**With the second differencing, the plot no longer shows a trend, and the moderate KPSS test statistic indicates that we fail to reject the null hypothesis of stationarity.**
+
+```{r}
+wmurders_d2 <- wmurders %>% diff() %>% diff()
+wmurders_d2 %>% ggtsdisplay()
+wmurders_d2 %>% urca::ur.kpss() %>% summary() 
+```
+
+**Now that we know that the `d` ARIMA parameter is 2, we can use the ACF and PACF plots above to estimate the `p` and `q` parameters. Since the ACF contains 2 significant spikes and the PACF lags are decaying, this indicates that we have series that is best represented by a moving-average model with an order of 2. Along with the differencing at an order of 2, we can hypothesize that our series is best represented with a ARIMA(0, 2, 2) model.**
+
+
+b. Should you include a constant in the model? Explain.
+
+**No. if we had no order of differencing or a single order of differencing, we would include a constant. Since our model has a differencing order of 2, we do not include a constant.**
+
+c. Write this model in terms of the backshift operator.
+
+**Here is the model ARIMA(0, 2, 2) with no constant.**
+
+$$(1-B)^2 y_{t} = (1+\theta_{1}B+ \theta_{2}B^2)\varepsilon_{t}$$
+
+d. Fit the model using R and examine the residuals. Is the model satisfactory?
+
+**In the ACF plot below, the lags do look like white noise. None of them are statistically significant. Also, the Ljung-Box test's p-value is not significant, which means that we fail to reject the null hypothesis that these residuals are independent.**
+
+```{r}
+my_arima <- Arima(wmurders, order = c(0, 2, 2))
+
+checkresiduals(my_arima)
+names(my_arima)
+
+```
+
+e. Forecast three times ahead. Check your forecasts by hand to make sure that you know how they have been calculated.
+
+**The next 3 forecasts show a decreasing trend.**
+
+```{r}
+h3 <- forecast(my_arima, h = 3, level = c(80, 95))
+h3$mean
+```
+
+
+f.Create a plot of the series with forecasts and prediction intervals for the next three periods shown.
+
+**The forecast predicts that the downward trend in female murders will continue.**
+
+```{r}
+
+autoplot(h3)
+
+```
+
+g.Does auto.arima() give the same model you have chosen? If not, which model do you think is better?
+
+**No, using the `auto.arima` function's most precise settings yields a model with a moving average on the order of 3 instead of 2: ARIMA(0, 2, 3).**
+
+```{r}
+auto_arima <- auto.arima(wmurders, stepwise = F, approximation = F, seasonal = F)
+(auto_arima)
+
+```
+
+**Deciding which model is better depends upon which objective function is being used. Out of the 4 metrics below, the `auto.arima` model is only better than my model for the squared error used in RMSE. My ARIMA(0, 2, 2) performs better when using the absolute loss functions. If penalizing the large errors is of particular importance, then one should use the ARIMA(0, 2, 3) model.**
+
+```{r}
+
+a1 <- accuracy(my_arima)
+a2 <- accuracy(auto_arima)
+metrics <- c("RMSE", "MAE", "MAPE", "MASE")
+
+a1[, metrics]
+a2[, metrics]
+
+```
+
+## Question 8.12
+
+For the `mcopper` data:
+ 
+a. if necessary, find a suitable Box-Cox transformation for the data;
+
+**First, let's look at the data:**
+
+```{r 8.12a}
+
+autoplot(mcopper) +
+    xlab("Year") + ylab("Price") +
+    ggtitle("Monthly Copper Prices")
+```
+
+**It seems the variation in the data is not constant as the level of the series changes, therefore a Box-Cox transformation may be helpful.**
+
+```{r 8.12aii}}
+lambda <- BoxCox.lambda(mcopper)
+mcopper_transformed <- BoxCox(mcopper,lambda)
+ylabel <- paste0("Price, ", "lambda = ", lambda)
+autoplot(mcopper_transformed) +
+ xlab("Year") + ylab(ylabel) +
+    ggtitle("Transformed Monthly Copper Prices")
+```
+ 
+b. fit a suitable ARIMA model to the transformed data using auto.arima();
+
+```{r 8.12b}
+auto_ARIMA <- auto.arima(mcopper_transformed, approximation=FALSE)
+
+auto_ARIMA
+```
+
+**The resulting model in an ARIMA(0,1,1).**
+
+c. try some other plausible models by experimenting with the orders chosen;
+
+**The approach shown below was to use the resulting auto ARIMA(0,1,1) model as a starting point and adjust the autoregressive, differencing, and moving average parameters by 1. The permutations of these new parameter values along with the orignal will be used to fit arima() models. The models were compared against the auto.arima() model using the AICc metric. None of the models produced better AICc values than the ARIMA(0,1,1) model. The ARIMA(0,1,1) model also had better AIC and BIC values. It seems the auto.arima() method did a good job on these data. A more rigorous approach would be needed to find a better model than the automated method.**
+
+
+**Test 1 - include an autoregressive component of order 1:**
+
+```{r 8.12ctest1}
+
+test1 <- Arima(mcopper_transformed, order=c(1,1,1))
+test1
+```
+
+**Test 2 & 3 - second order differencing might make the data more stationary:**
+
+```{r 8.12ctest2}
+
+test2 <- Arima(mcopper_transformed, order=c(0,2,1))
+test2
+```
+
+```{r 8.12ctest3}
+
+test3 <- Arima(mcopper_transformed, order=c(1,2,1))
+test3
+```
+
+**Test 4 & 5 & 6 - second order moving average: **
+
+```{r 8.12ctest4}
+
+test4 <- Arima(mcopper_transformed, order=c(0,2,2))
+test4
+```
+
+```{r 8.12ctest5}
+
+test5 <- Arima(mcopper_transformed, order=c(1,2,2))
+test5
+```
+
+```{r 8.12ctest6}
+
+test6 <- Arima(mcopper_transformed, order=c(1,1,2))
+test6
+```
+
+
+d. choose what you think is the best model and check the residual diagnostics;
+
+**The best model is an ARIMA(0,1,1), based on the AICc. The residuals resemble white noise because all autocorrelations are within the threshold limits. This seems to be a reasonable model. **
+
+```{r 8.12bii}
+
+checkresiduals(auto_ARIMA)
+```
+
+e. produce forecasts of your fitted model. Do the forecasts look reasonable?
+
+**The forecast generated below seems reasonable. The confidence interval widens as the forecast goes further into the future. It also allows for both a decrease and increase in copper prices, while adhereing to the overall increasing trend of the series.** 
+
+```{r 8.12e}
+
+auto_ARIMA %>% forecast() %>% autoplot()
+
+```
+
+f. compare the results with what you would obtain using ets() (with no transformation).
+
+
+**The main difference between the forecasts is that the ETS model predicts a much higher probability of copper prices soaring above the significant spike that occurred around 2007. The ARIMA model seems a bit more realistic, but historically the ETS model is more accurate given that copper prices did soar a few years later, primarily due to undersupply. Ofcourse, economic and other external factors were not parameters in the models.**
+
+
+```{r 8.12f}
+
+ets_fc <- ets(mcopper)
+ARIMA_fc <- Arima(mcopper, order=c(0,1,1))
+
+gridExtra::grid.arrange(
+  autoplot(forecast(ets_fc)) + 
+    ylab("Price") + xlab("Year") + ggtitle("Copper Price Forecast: ETS"),
+  autoplot(forecast(ARIMA_fc)) + 
+    ylab("Price") + xlab("Year") + ggtitle("Copper Price Forecast: ARIMA(0,1,1)"),
+  nrow = 2
+)
+
+```
+
+# KJ Questions
+
+## KJ 3.1 
+
+The UC Irvine Machine Learning Repository 6 contains a data set related
+    to glass identification. The data consist of 214 glass samples labeled as one
+    of seven class categories. There are nine predictors, including the refractive
+    index and percentages of eight elements: Na, Mg, Al, Si, K, Ca, Ba, and Fe.
+    The data can be accessed via:
+    'library(mlbench)'
+    'data(Glass)'
+    'str(Glass)'
+    
+a. Using visualizations, explore the predictor variables to understand their distributions as well as the relationships between predictors.
+    
+**Let's load the dataset as requested and examine some plots.**
+
+```{r}
+data("Glass")
+str(Glass)
+summary(Glass)
+```
+
+**Using ggplot2 with geom_histogram to see the distribution and using box-pairs. Make a variable to hold the plot object of each predictor variable and use grid.arrange to show a 3x3 layout**
+
+```{r hist-class-categories}
+# each predictor variable
+RI_hist <- ggplot(Glass,aes(RI)) + geom_histogram() + ylab("")
+Na_hist <- ggplot(Glass,aes(Na)) + geom_histogram() + ylab("")
+Mg_hist <- ggplot(Glass,aes(Mg)) + geom_histogram() + ylab("")
+Al_hist <- ggplot(Glass,aes(Al)) + geom_histogram() + ylab("")
+Si_hist <- ggplot(Glass,aes(Si)) + geom_histogram() + ylab("")
+K_hist <- ggplot(Glass,aes(K)) + geom_histogram() + ylab("")
+Ca_hist <- ggplot(Glass,aes(Ca)) + geom_histogram() + ylab("")
+Ba_hist <- ggplot(Glass,aes(Ba)) + geom_histogram() + ylab("")
+Fe_hist <- ggplot(Glass,aes(Fe)) + geom_histogram() + ylab("")
+
+# make a 3x3 grid to show each one in a single plot.
+
+grid.arrange(RI_hist, Na_hist, Mg_hist,
+             Al_hist, Si_hist, K_hist,
+             Ca_hist, Ba_hist, Fe_hist, ncol=3, nrow=3,
+             top = textGrob("Histogram of Class Categories"))
+```
+
+**In these histograms of predictor variables, we see that several variables are  skewed. We also see that K, Ba and Fe follow quite a heavy right skewed distribution. The other variables besides Mg follow similar distributions as well. **
+
+**Let's see the relationship of these variables using the corrplot package which will help us visualize the correlation matrix among these variables. **
+
+```{r corrmatrix}
+corr_matrix <- cor(Glass[,-10]) # matrix to two decimal places
+corrplot(corr_matrix, method = "color")
+```
+
+** Looking the correlation plot:**
+
+-   Fe, Ba, doesn't have strong correlation amongst the other variables.
+-   Ca and RI have the strongest correlation (positive)
+-   There are more negative weak correlations between predictors than any other
+    correlation. 
+    
+**Adding the correlation with the response variable "Type". The matrix will tell us how well related the predictors are to the response variable.**
+
+```{r corrmatrix-with-type}
+cor(Glass[,-10], as.numeric(Glass$Type))
+```
+
+**From the above column, Mg, Al and Ba have the highest correlation in regards to glass Type. Mg has a strong negative relationship and Al and Ba have pretty strong positive relationships.**
+    
+    
+b. Do there appear to be any outliers in the data? Are any predictors skewed?
+
+**We see from the histograms above from a) that many of the variables have skewness some more than others. Furthermore, there are several outliers by looking at the histogram. I would expect there to be skewness as each glass sample can have random percentages of the elements.**
+    
+c. Are there any relevant transformations of one or more predictors that might improve the classification model?
+
+**Let's first transform the predictors Mg, K, Ba and, Fe using a box-cox transform as they are heavily skewed with large tails. I will use the BoxCoxTrans() function to achieve this so I can get the optimum lambda value for each predictor. One thing from the summary is that these predcitors I'm choosing have a min value of 0 so it will help to add a small amount say 1e-6 (0.000001) to make the function work.**
+
+```{r}
+# Box-cox transforms
+Glass$K <- Glass$K + 1e-6
+Glass$Ba <- Glass$Ba + 1e-6
+Glass$Fe <- Glass$Fe + 1e-6
+Glass$Mg <- Glass$Mg + 1e-6
+```
+
+**After transforming the variables, we can then apply the Box-Cox transform to all the predictor variables and see the histogram of predictors. We can also see the skewness before and after the transformations.**
+
+```{r}
+# function to use the boxcoxtrans function and predict after transforming and
+# computing skewness
+boxcoxplots <- function(class){
+  boxcox <- BoxCoxTrans(class)
+  boxcox_pred <- predict(boxcox, class)
+  # find the skewness after using the box-cox transform
+  skewness(boxcox_pred)
+}
+```
+
+**Let's do a before and after of skewness of each predictor to see if using the box-cox transform fixed the skewness**
+
+```{r compare-skewness}
+# before
+apply(Glass[,-10], 2, skewness)
+# after
+apply(Glass[,-10], 2, boxcoxplots)
+```
+
+**The skewness was reduced to be slightly skewed instead of before, doing this transformation on variables especially like K, Ba, Fe and Ca and Mg might make predicting glass type better.**
+
+## KJ 3.2
+
+The soybean data can also be found at the UC Irvine Machine Learning Repository. Data were collected to predict disease in 683 soybeans. The 35 predictors are mostly categorical and include information on the environmental conditions (e.g., temperature, precipitation) and plant conditions (e.g., left spots, mold growth). The outcome labels consist of 19 distinct classes.
+
+a. Investigate the frequency distributions for the categorical predictors. Are any of the distributions degenerate in the ways discussed earlier in this chapter?
+
+
+**Histogram of predictors:**
+
+```{r fig.height=10, warning=FALSE}
+data("Soybean")
+Soybean_Data <- gather(Soybean, "Variable", "Value", 2:36)
+ggplot(Soybean_Data, aes(x=Value)) + 
+  geom_bar(aes(y=..count..), colour="black", fill = "blue") +  
+  facet_wrap(~Variable, scale = "free", nrow = 10) +
+  labs(x="Value", y="Frequency")
+```
+
+**The main issue with many of the frequency distributions above is zero-inflation, resulting in right skewness. These predictors are  `canker.lesion`,`ext.decay`, fruit.pods, fruit.spots, fruiting.bodies, `hail`, `int.discolor`, `leaf.malf`,`leaf.mild`, `leaf.shread`, `lodging`, `mold.growth`, `mycelium`, `plant.growth`, `roots`, `sclerotia`, `seed`, `seed.discolor`, `seed.size`, `shriveling`, `stem.cankers`.**
+
+**The predictors `leaves` and `precip` are skewed to the left.**
+
+
+b. Roughly 18% of the data are missing. Are there particular predictors that are more likely to be missing? Is the pattern of missing data related to the classes?
+
+**The plot below, showing the percentage of missing data by predictor reveals that the `sever`, `seed.tmt`, `lodging`, and `hail` predictors are missing roughly 18% of their data, matching the overall rate It appears that predictors that are related have the same amount of their data missing. The other plot reveals that there are only 5 classes with missing data, namely `2-4-d-injury`, `cyst-nematode`, `herbicide injury`, `phytophthora-rot`, `diaporthe-pod-&-stem-blight`. The rate of missing values are quite significant, ranging from 33% to 80%. It is safe to say that pattern of missing data is related to the classes.**
+
+
+```{r warning=FALSE}
+summary <- describe(Soybean)
+summary$na <- nrow(Soybean) - summary$n
+summary$na_pct <- round(summary$na/nrow(Soybean)*100,2)
+summary$variable <- row.names(summary)
+
+ggplot(summary, aes(x=reorder(variable, na), y=na, label = na_pct)) + 
+  geom_histogram(aes(y=na),colour="black", stat = "identity",show.legend = F, fill = "cyan") +  
+  geom_text(size = 2, position = position_stack(vjust = 0.5)) + 
+  coord_flip() +
+  labs(title = "Missing Data by Predictor", x="Predictor", y="Missing Values")
+```
+
+```{r warning=FALSE}
+Soybean_Classes <- Soybean_Data %>% group_by(Class) %>%
+summarize(Total = n())
+
+Soybean_Data %>% group_by(Class, Value) %>%
+  summarize(Count = n()) %>%
+  filter(is.na(Value)) %>%
+  inner_join(Soybean_Classes) %>%
+  mutate(Rate = round(Count/Total*100,2)) %>%
+
+ggplot( aes(x = reorder(Class, Rate), y = Rate, label = Rate)) + 
+                geom_bar(stat = "identity", show.legend = FALSE) + 
+                geom_text(size = 3, position = position_stack(vjust = 0.5)) + 
+                coord_flip() +
+                labs(title = "Missing Values by Class", y = "Mising Values (%)",x = "Class")
+```
+
+
+c.  Develop a strategy for handling missing data, either by eliminating predictors or imputation.
+
+**There seem to be some structure among predictors in relation to their missingness. Deleting a fifth of this data set containing less than 700 hundred cases may result in too much information being lost. Therefore, the missing data will be imputed using predictive mean matching, in which each missing variable in an observation will be matched with the closest predictive mean of that specific variable, using available values. The imputation will be done using the `mi` package. The package was able to detect that there are similar patterns of missingness in some pairs of predictors.** 
+
+```{r}
+
+Soybean_Imputed <- mi(Soybean, seed = 2, n.iter=1)
+Soybean_Imputed <- select(complete(Soybean_Imputed,1), 1:35)
+describe(Soybean_Imputed)
+```

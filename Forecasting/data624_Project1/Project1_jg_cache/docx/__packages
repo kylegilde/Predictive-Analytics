@@ -1,0 +1,13 @@
+base
+dplyr
+tidyr
+forecast
+ggplot2
+zoo
+xts
+foreach
+iterators
+doMC
+kableExtra
+openxlsx
+bindrcpp

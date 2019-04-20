@@ -1,0 +1,1044 @@
+---
+title: "Project 1"
+subtitle: "DATA 624 Group 2 Homework"
+author: "John Grando, Kyle Gilde, Jonathan Hernandez, Albert Gilharry, Neil Hwang"
+date: "January 27, 2019"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width=10, 
+                      fig.height=5,
+                      fig.align = 'center', 
+                      echo = TRUE,
+                      cache = TRUE)
+```
+
+```{r results='hide'}
+install_and_load_pkgs <- function(pkg){
+  # Load a vector of packages and install them if needed.
+  # CODE SOURCE: https://gist.github.com/stevenworthington/3178163
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg)) install.packages(new.pkg, dependencies = T)
+  sapply(pkg, require, character.only = T, quietly = T, warn.conflicts = T)
+}
+
+# list the packages here
+pkgs <- c("dplyr", "tidyr", "forecast", "ggplot2", "xts", "doMC", "kableExtra", "openxlsx")
+
+install_and_load_pkgs(pkgs)
+
+# if you are using windows, use this command:
+# install.packages("doMC", repos="http://R-Forge.R-project.org")
+```
+
+```{r}
+source('Source/project1_jg.R')
+source('local_cv_test.R')
+```
+
+## Data Preparation
+
+On initial inspection, the `SeriesInd` appear to have minor regularly occuring gaps for all data points.  The consecutive runs of four and five index values do indicate that this time series might be based on weekday reporting; however, there did not appear to be a noticeable origin date to use in order to link the indices to actual datetimes.  Therefore, it was decided that the indices were to be treated as if they were consecutive, ignoring the gaps, much like how weekday data would be processed anyways, but without an indication of frequency (e.g. week, month, year time periods).  In fact, due to the unknown nature of the frequency of values, this feature will be varied in hyperparameter training, which is typically not the case.
+
+As a first step, the data were checked for missing values, which were present in all of the variables.  These values were filled in by interpolation.  
+
+```{r}
+#check nulls
+t(sapply(excel_df, function(x){sum(is.na(x))})) %>% 
+  kable('html') %>% 
+  kable_styling()
+```
+
+```{r eval=FALSE}
+#Graph imputations
+autoplot(s03_v01_full_ts, series='interpolated') +
+  autolayer(s03_v01_ts, series='original') +
+  scale_color_manual(
+    values = c(`interpolated`='red',`original`='gray')
+  )
+
+autoplot(s03_v02_full_ts, series='interpolated') +
+  autolayer(s03_v02_ts, series='original') +
+  scale_color_manual(
+    values = c(`interpolated`='red',`original`='gray')
+  )
+
+p <- autoplot(s03_v03_full_ts, series='interpolated') +
+  autolayer(s03_v03_ts, series='original') +
+  scale_color_manual(
+    values = c(`interpolated`='red',`original`='gray')
+  )
+
+p
+
+p <- ggsave(plot = p, filename = 'Images/inter_plot.png', units = 'in', width = 8, height = 4)
+
+autoplot(s03_v05_full_ts, series='interpolated') +
+  autolayer(s03_v05_ts, series='original') +
+  scale_color_manual(
+    values = c(`interpolated`='red',`original`='gray')
+  )
+
+autoplot(s03_v07_full_ts, series='interpolated') +
+  autolayer(s03_v07_ts, series='original') +
+  scale_color_manual(
+    values = c(`interpolated`='red',`original`='gray')
+  )
+```
+
+Next, the data were analyzed for outliers.  After a preliminary inspection, it appears that there was one value in S06 (Var01, Var03, Var05, Var07) and one value in S02 (Var01, Var03, Var05, Var07) that is much different that any other measurements, and were therefore removed.
+
+```{r fig.height=12, message=FALSE, warning=FALSE}
+ggplot_df <- excel_df %>% 
+  gather('Var', 'Value', 3:7)
+#check trends
+p <- ggplot(ggplot_df, aes(x=SeriesInd, y=Value, color=group)) + 
+  geom_line() + 
+  facet_wrap(~Var, scales = 'free', ncol = 3) #+
+  #ggtitle('Series Plots With Outliers') +
+  #theme(plot.title = element_text(hjust = 0.5))
+
+p
+
+ggsave(plot = p, filename = 'Images/series_plot.png', units = 'in', width = 8, height = 4)
+
+#check outliers
+ggplot(ggplot_df, aes(x=group, y=Value)) + 
+  geom_boxplot() + 
+  facet_wrap(~Var, scales = 'free', ncol = 3) +
+  ggtitle('Series Box Plots With Outliers') +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r fig.height=12, message=FALSE, warning=FALSE}
+ggplot_df <- excel_no_outlier_df %>% 
+  gather('Var', 'Value', 3:7) #%>% 
+  #use this to filter and graph subgroups
+  #filter(group=='S03' & Var=='Var05' & (SeriesInd > as.Date('2015-01-01') & SeriesInd < as.Date('2017-01-01')))
+#check trends
+ggplot(ggplot_df, aes(x=SeriesInd, y=Value, color=group)) + 
+  geom_line() + 
+  facet_wrap(~Var, scales = 'free', ncol = 2) +
+  ggtitle('Series Plots Without Outliers') +
+  theme(plot.title = element_text(hjust = 0.5))
+
+#check outliers
+ggplot(ggplot_df, aes(x=group, y=Value)) + 
+  geom_boxplot() + 
+  facet_wrap(~Var, scales = 'free', ncol = 2) +
+  ggtitle('Series Box Plots Without Outliers') +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r eval=FALSE}
+s03_v01_max_points_df <- s03_v01_df %>% filter(
+  SeriesInd<41600 & Var01 == max(s03_v01_df %>% filter(SeriesInd<41600) %>% select(Var01)) |
+  SeriesInd<42500 & Var01 == max(s03_v01_df %>% filter(SeriesInd<42500) %>% select(Var01))
+)
+
+s03_v01_freq <- (s03_v01_max_points_df[2,1] - s03_v01_max_points_df[1,1])[[1]]
+
+#graph and examine possible frequencies
+ggplot(s03_v01_df, aes(x=SeriesInd, y=Var01)) +
+  geom_line() +
+  geom_point(s03_v01_max_points_df, 
+             mapping = aes(x=SeriesInd, Var01), 
+             size=3, 
+             color='blue')
+```
+
+```{r eval=FALSE}
+#s03_v02_freq <- 125
+
+#freq_points_df <- s03_v02_df[seq(1, nrow(s03_v02_df), s03_v02_freq), ]
+
+ggplot(s03_v02_df, aes(x=SeriesInd, y=Var02)) +
+  geom_line() #+
+  #geom_point(freq_points_df, 
+  #           mapping = aes(x=SeriesInd, Var02), 
+  #           size=3, 
+  #           color='blue')
+```
+
+### S03 Analysis
+
+```{r eval=FALSE}
+s03_v03_max_points_df <- s03_v03_df %>% filter(
+  SeriesInd<41600 & Var03 == max(s03_v03_df %>% filter(SeriesInd<41600) %>% select(Var03)) |
+  SeriesInd<42500 & Var03 == max(s03_v03_df %>% filter(SeriesInd<42500) %>% select(Var03))
+)
+
+s03_v03_freq <- (s03_v03_max_points_df[2,1] - s03_v03_max_points_df[1,1])[[1]]
+
+#graph and examine possible frequencies
+ggplot(s03_v03_df, aes(x=SeriesInd, y=Var03)) +
+  geom_line() +
+  ggtitle('S03 Var03 Data Plot') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_point(s03_v03_max_points_df, 
+             mapping = aes(x=SeriesInd, Var03), 
+             size=3, 
+             color='blue')
+```
+
+There is an obvious upward trend in the data for S03 Var05 and Var07 with possibly some cyclical nature.  Both are highly correlated with each other so it appears the final selected method for one will work with the other.  For time series data with no obvious trend-cycle, a simple exponential smooothing method would work the best; however, since there is an apparent upward trend, then it is possible that the holt method would be a good fit, which was specifically developed to address these types of time series.  A holt-winter and STL decomposition model will also be studied in case there is any unseen seasonal action being performed.  Additionally, given the short-term erratic nature of the values from point to point, an ARIMA model will be attempted.  This model will specifically include a drift component given that the data show an upward trend.   Finally, a simple naive model will be constructed in order to gauge the effectiveness of the other models.
+
+All the models mentioned above will have various hyperparameters trained and optimized to have the lowest root mean square error on the 140th observation (maximum prediction length).  In order to ensure that the model that best fits the series, and not the last few points, the 140th step-ahead error was calculated from the 1000th point to the end of the data set and the RMSE was calculated on these results.  Additionally, the mean average percentage error (MAPE) was taken to provide further insight.  Only valid candidate models will be produced below
+
+```{r message=FALSE, warning=FALSE}
+s03_v05_max_points_df <- s03_v05_df %>% filter(
+  SeriesInd<41600 & Var05 == max(s03_v05_df %>% filter(SeriesInd<41600) %>% select(Var05)) |
+  SeriesInd<42500 & Var05 == max(s03_v05_df %>% filter(SeriesInd<42500) %>% select(Var05))
+)
+
+s03_v05_freq <- (s03_v05_max_points_df[2,1] - s03_v05_max_points_df[1,1])[[1]]
+
+#graph and examine possible frequencies
+p1 <- ggplot(s03_v05_df, aes(x=SeriesInd, y=Var05)) +
+  geom_line() +
+  ggtitle('S03 Var05 Data Plot') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_point(s03_v05_max_points_df, 
+             mapping = aes(x=SeriesInd, Var05), 
+             size=3, 
+             color='blue')
+```
+
+```{r message=FALSE, warning=FALSE}
+s03_v07_max_points_df <- s03_v07_df %>% filter(
+  SeriesInd<41600 & Var07 == max(s03_v07_df %>% filter(SeriesInd<41600) %>% select(Var07)) |
+  SeriesInd<42500 & Var07 == max(s03_v07_df %>% filter(SeriesInd<42500) %>% select(Var07))
+)
+
+s03_v07_freq <- (s03_v07_max_points_df[2,1] - s03_v07_max_points_df[1,1])[[1]]
+
+#graph and examine possible frequencies
+p2 <- ggplot(s03_v07_df, aes(x=SeriesInd, y=Var07)) +
+  geom_line() +
+  ggtitle('S03 Var07 Data Plot') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_point(s03_v07_max_points_df, 
+             mapping = aes(x=SeriesInd, Var07), 
+             size=3, 
+             color='blue')
+
+library(gridExtra)
+g <- grid.arrange(p1, p2, ncol = 2)
+ggsave(filename = 'Images/S03_initial.png', plot = g, units = 'in', width = 8, height = 4)
+```
+
+```{r warning=FALSE, message=FALSE, fig.height=8, eval=FALSE}
+#ggsubseriesplot(s03_v05_full_ts)
+library(GGally)
+ggpairs(base_df %>% select(-SeriesInd, -group))
+```
+
+```{r fig.height=12, eval=FALSE}
+gglagplot(s03_v05_ts) + 
+  ggtitle('S03 Var05 Lag Plot') + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r eval=FALSE}
+ggAcf(s03_v05_full_ts, lag = 1000) + 
+  ggtitle('S03 Var05 ACF Plot') + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+#train/test set
+test_ratio <- 0.95
+cv_h <- 140
+cv_start <- 1000
+prediction_length <- 140
+```
+
+<!-- ## Naive Base Model -->
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+naive_frequency = 1
+s03_v05_naive_ts <- s03_v05_full_ts
+s03_v05_naive_train_ts <- window(s03_v05_naive_ts, 
+                                 start = 1, 
+                                 end = floor(test_ratio * 1622/naive_frequency))
+s03_v05_naive_test_ts <- window(s03_v05_naive_ts, 
+                                start = floor(test_ratio * 1622/naive_frequency))
+s03_v05_naive_test_fit <- naive(s03_v05_naive_train_ts, h = length(s03_v05_naive_test_ts))
+#checkresiduals(s03_v05_naive_test_fit)
+#autoplot(s03_v05_naive_test_fit) + 
+#  autolayer(s03_v05_naive_test_ts)
+
+s03_v05_naive_fit <- naive(s03_v05_naive_ts, h = prediction_length)
+
+forecast_fun_no_reg <- function(y, h = h, xreg=NULL) {
+  x <- naive(y, h = h)
+  return(x)
+}
+
+#Do CV on final model
+e_naive_s03_v05 <- tsCV_jg(y = s03_v05_naive_ts, 
+          forecastfunction = forecast_fun_no_reg,
+          h=cv_h,
+          initial=cv_start,
+          extra_args = TRUE)
+save(e_naive_s03_v05, file = 'Models/project1_jg_e_naive_s03_v05.RData')
+```
+
+```{r eval=FALSE}
+checkresiduals(s03_v05_naive_fit)
+autoplot(s03_v05_naive_fit) + 
+  autolayer(s03_v05_naive_test_fit) +
+  autolayer(s03_v05_naive_ts) + 
+  ggtitle('S03 Var05 Naive Plot') + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+naive_frequency = 1
+s03_v07_naive_ts <- s03_v07_full_ts
+s03_v07_naive_train_ts <- window(s03_v07_naive_ts, 
+                                 start = 1, 
+                                 end = floor(test_ratio * 1622/naive_frequency))
+s03_v07_naive_test_ts <- window(s03_v07_naive_ts, 
+                                start = floor(test_ratio * 1622/naive_frequency))
+s03_v07_naive_test_fit <- naive(s03_v07_naive_train_ts, h = length(s03_v07_naive_test_ts))
+#checkresiduals(s03_v07_naive_test_fit)
+#autoplot(s03_v07_naive_test_fit) + 
+#  autolayer(s03_v07_naive_test_ts)
+
+s03_v07_naive_fit <- naive(s03_v07_naive_ts, h = prediction_length)
+
+forecast_fun_no_reg <- function(y, h = h, xreg=NULL) {
+  x <- naive(y, h = h)
+  return(x)
+}
+
+#Do CV on final model
+e_naive_s03_v07 <- tsCV_jg(y = s03_v07_naive_ts, 
+          forecastfunction = forecast_fun_no_reg,
+          h=cv_h,
+          initial=cv_start,
+          extra_args = TRUE)
+save(e_naive_s03_v07, file = 'Models/project1_jg_e_naive_s03_v07.RData')
+```
+
+```{r eval=FALSE}
+checkresiduals(s03_v07_naive_fit)
+autoplot(s03_v07_naive_fit) + 
+  autolayer(s03_v07_naive_test_fit) +
+  autolayer(s03_v07_naive_ts) + 
+  ggtitle('S03 Var07 Naive Plot') + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+#### STL Model
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+stl_frequency <- 180
+s03_v05_stl_ts <- ts(s03_v05_full_ts, frequency = stl_frequency, start = 1)
+s03_v05_stl_train_ts <- window(s03_v05_stl_ts, 
+                                 start = 1, 
+                                 end = floor(test_ratio * 1622/stl_frequency))
+s03_v05_stl_test_ts <- window(s03_v05_stl_ts, 
+                                start = floor(test_ratio * 1622/stl_frequency))
+
+s03_v05_stl_test_fit <- stlf(s03_v05_stl_train_ts, 
+                        method='ets', 
+                        t.window = 11, 
+                        s.window = 101, 
+                        robust = TRUE,
+                        h =  length(s03_v05_stl_test_ts))
+#checkresiduals(s03_v05_stl_test_fit)
+#autoplot(s03_v05_stl_test_fit) + 
+#  autolayer(s03_v05_stl_test_ts)
+
+#check full model
+s03_v05_stl_fit <- stlf(s03_v05_stl_ts, 
+                        method='ets', 
+                        t.window = 11, 
+                        s.window = 101, 
+                        robust = TRUE,
+                        h = prediction_length)
+
+forecast_fun_no_reg <- function(y, h = h, xreg=NULL) {
+  x <- stlf(y, 
+    method='ets', 
+    t.window = 11, 
+    s.window = 101, 
+    robust = TRUE, 
+    h = h)
+  return(x)
+}
+
+e_stl_s03_v05 <- tsCV_jg(y = s03_v05_stl_ts, 
+          forecastfunction = forecast_fun_no_reg,
+          h=cv_h,
+          initial=cv_start,
+          extra_args = TRUE)
+save(e_stl_s03_v05, file = 'Models/project1_jg_e_stl_s03_v05.RData')
+```
+
+```{r message=FALSE, warning=FALSE,}
+checkresiduals(s03_v05_stl_fit)
+stl_plot <- autoplot(s03_v05_stl_fit) + 
+  autolayer(s03_v05_stl_test_fit, series = 'STL_Test') +
+  autolayer(s03_v05_stl_test_ts, series = 'Actual') +
+  autolayer(naive(s03_v05_stl_ts, h = prediction_length), series="Naive", PI=FALSE) +
+  autolayer(naive(s03_v05_stl_train_ts, h = length(s03_v05_stl_test_ts)), series="Naive_Test", PI=FALSE) + 
+  scale_color_manual(values=c('springgreen', 'steelblue', 'yellow', 'green')) + 
+  ggtitle('S03 Var05 STL Plot') + 
+  theme(plot.title = element_text(hjust = 0.5))
+ggsave(plot = stl_plot, filename = 'Images/s03_stl_plot.png', units = 'in', width = 8, height = 4)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+stl_frequency <- 90
+s03_v07_stl_ts <- ts(s03_v07_full_ts, frequency = stl_frequency, start = 1)
+s03_v07_stl_train_ts <- window(s03_v07_stl_ts, 
+                                 start = 1, 
+                                 end = floor(test_ratio * 1622/stl_frequency))
+s03_v07_stl_test_ts <- window(s03_v07_stl_ts, 
+                                start = floor(test_ratio * 1622/stl_frequency))
+
+s03_v07_stl_test_fit <- stlf(s03_v07_stl_train_ts, 
+                        method='ets', 
+                        t.window = 1, 
+                        s.window = 7, 
+                        robust = TRUE,
+                        h =  length(s03_v07_stl_test_ts))
+#checkresiduals(s03_v07_stl_test_fit)
+#autoplot(s03_v07_stl_test_fit) + 
+#  autolayer(s03_v07_stl_test_ts)
+
+#check full model
+s03_v07_stl_fit <- stlf(s03_v07_stl_ts, 
+                        method='ets', 
+                        t.window = 1, 
+                        s.window = 7, 
+                        robust = TRUE,
+                        h = prediction_length)
+
+forecast_fun_no_reg <- function(y, h = h, xreg=NULL) {
+  x <- stlf(y, 
+    method='ets', 
+    t.window = 1, 
+    s.window = 7, 
+    robust = TRUE, 
+    h = h)
+  return(x)
+}
+
+e_stl_s03_v07 <- tsCV_jg(y = s03_v07_stl_ts, 
+          forecastfunction = forecast_fun_no_reg,
+          h=cv_h,
+          initial=cv_start,
+          extra_args = TRUE)
+save(e_stl_s03_v07, file = 'Models/project1_jg_e_stl_s03_v07.RData')
+```
+
+```{r message=FALSE, warning=FALSE,}
+checkresiduals(s03_v07_stl_fit)
+autoplot(s03_v07_stl_fit) + 
+  autolayer(s03_v07_stl_test_fit, series = 'STL_Test') +
+  autolayer(s03_v07_stl_test_ts, series = 'Actual') +
+  autolayer(naive(s03_v07_stl_ts, h = prediction_length), series="Naive", PI=FALSE) +
+  autolayer(naive(s03_v07_stl_train_ts, h = length(s03_v07_stl_test_ts)), series="Naive_Test", PI=FALSE) + 
+  scale_color_manual(values=c('springgreen', 'steelblue', 'yellow', 'green')) + 
+  ggtitle('S03 Var07 STL Plot') + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+<!-- ## Holt Model -->
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+holt_frequency <- 1
+s03_v05_holt_ts <- ts(s03_v05_full_ts, frequency = holt_frequency, start = 1)
+s03_v05_holt_train_ts <- window(s03_v05_holt_ts, 
+                                 start = 1, 
+                                 end = floor(test_ratio * 1622/holt_frequency))
+s03_v05_holt_test_ts <- window(s03_v05_holt_ts, 
+                                start = floor(test_ratio * 1622/holt_frequency))
+s03_v05_holt_test <- holt(s03_v05_holt_train_ts, 
+                          lambda = NULL, 
+                          level = c(85, 90),
+                          h=length(s03_v05_holt_test_ts))
+#checkresiduals(s03_v05_holt_test)
+s03_v05_holt_test_fit <- s03_v05_holt_test %>% 
+  forecast(h=length(s03_v05_holt_test_ts), lambda=NULL, level = c(85, 90))
+#s03_v05_holt_test_fit %>% 
+#  autoplot() + 
+#  autolayer(s03_v05_holt_test_ts)
+
+#full model
+s03_v05_holt <- holt(s03_v05_holt_ts, 
+                     lambda = NULL, 
+                     level = c(85, 90),
+                     h=prediction_length)
+
+forecast_fun_no_reg <- function(y, h = h, lambda_sub=NULL) {
+  if(lambda_sub=='NULL'){
+    lambda_sub=NULL
+  }
+  tmp_model <- holt(y, h=h, lambda = lambda_sub)
+  tmp_fit <- tmp_model %>% forecast(h=h)
+  return(tmp_fit)
+}
+
+e_holt_s03_v05 <- tsCV_jg(y = s03_v05_holt_ts, 
+          forecastfunction = forecast_fun_no_reg,
+          h=cv_h,
+          initial=cv_start,
+          lambda_sub='NULL',
+          extra_args = TRUE)
+save(e_holt_s03_v05, file = 'Models/project1_jg_e_holt_s03_v05.RData')
+```
+
+```{r eval=FALSE}
+checkresiduals(s03_v05_holt)
+s03_v05_holt_fit <- s03_v05_holt %>% 
+  forecast(h=prediction_length, level = c(85, 90))
+s03_v05_holt_fit %>% 
+  autoplot() + 
+  autolayer(s03_v05_holt_test_fit, series = 'Holt_Test') +
+  autolayer(s03_v05_holt_test_ts, series = 'Actual') +
+  autolayer(naive(s03_v05_holt_ts, h = prediction_length), series="Naive", PI=FALSE) +
+  autolayer(naive(s03_v05_holt_train_ts, h = length(s03_v05_holt_test_ts)), series="Naive_Test", PI=FALSE) + 
+  scale_color_manual(values=c('springgreen', 'steelblue', 'yellow', 'green')) + 
+  ggtitle('S03 Var05 Holt Plot') + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+holt_frequency <- 1
+s03_v07_holt_ts <- ts(s03_v07_full_ts, frequency = holt_frequency, start = 1)
+s03_v07_holt_train_ts <- window(s03_v07_holt_ts, 
+                                 start = 1, 
+                                 end = floor(test_ratio * 1622/holt_frequency))
+s03_v07_holt_test_ts <- window(s03_v07_holt_ts, 
+                                start = floor(test_ratio * 1622/holt_frequency))
+s03_v07_holt_test <- holt(s03_v07_holt_train_ts, 
+                          lambda = NULL, 
+                          level = c(85, 90),
+                          h=length(s03_v07_holt_test_ts))
+#checkresiduals(s03_v07_holt_test)
+s03_v07_holt_test_fit <- s03_v07_holt_test %>% 
+  forecast(h=length(s03_v07_holt_test_ts), lambda=NULL, level = c(85, 90))
+#s03_v07_holt_test_fit %>% 
+#  autoplot() + 
+#  autolayer(s03_v07_holt_test_ts)
+
+#full model
+s03_v07_holt <- holt(s03_v07_holt_ts, 
+                     lambda = NULL, 
+                     level = c(85, 90),
+                     h=prediction_length)
+
+forecast_fun_no_reg <- function(y, h = h, lambda_sub=NULL) {
+  if(lambda_sub=='NULL'){
+    lambda_sub=NULL
+  }
+  tmp_model <- holt(y, h=h, lambda = lambda_sub)
+  tmp_fit <- tmp_model %>% forecast(h=h)
+  return(tmp_fit)
+}
+
+e_holt_s03_v07 <- tsCV_jg(y = s03_v07_holt_ts, 
+          forecastfunction = forecast_fun_no_reg,
+          h=cv_h,
+          initial=cv_start,
+          lambda_sub='NULL',
+          extra_args = TRUE)
+save(e_holt_s03_v07, file = 'Models/project1_jg_e_holt_s03_v07.RData')
+```
+
+```{r eval=FALSE}
+checkresiduals(s03_v07_holt)
+s03_v07_holt_fit <- s03_v07_holt %>% 
+  forecast(h=prediction_length, level = c(85, 90))
+s03_v07_holt_fit %>% 
+  autoplot() + 
+  autolayer(s03_v07_holt_test_fit, series = 'Holt_Test') +
+  autolayer(s03_v07_holt_test_ts, series = 'Actual') +
+  autolayer(naive(s03_v07_holt_ts, h = prediction_length), series="Naive", PI=FALSE) +
+  autolayer(naive(s03_v07_holt_train_ts, h = length(s03_v07_holt_test_ts)), series="Naive_Test", PI=FALSE) + 
+  scale_color_manual(values=c('springgreen', 'steelblue', 'yellow', 'green')) + 
+  ggtitle('S03 Var07 Holt Plot') + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+<!-- ## Holt Winter Model -->
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+hw_frequency <- 18
+s03_v05_hw_ts <- ts(s03_v05_full_ts, frequency = hw_frequency, start = 1)
+s03_v05_hw_train_ts <- window(s03_v05_hw_ts, 
+                                 start = 1, 
+                                 end = floor(test_ratio * 1622/hw_frequency))
+s03_v05_hw_test_ts <- window(s03_v05_hw_ts, 
+                                start = floor(test_ratio * 1622/hw_frequency))
+s03_v05_hw_test <- hw(s03_v05_hw_train_ts, 
+                      lambda = NULL, 
+                      seasonal='additive',
+                      h=length(s03_v05_hw_test_ts), 
+                      level = c(85, 90))
+#checkresiduals(s03_v05_hw_test)
+s03_v05_hw_test_fit <- s03_v05_hw_test %>% 
+  forecast(h=length(s03_v05_hw_test_ts), level = c(85, 90))
+#s03_v05_hw_test_fit %>% 
+#  autoplot() + 
+#  autolayer(s03_v05_hw_test_ts)
+
+#full model
+s03_v05_hw <- holt(s03_v05_hw_ts, 
+                   lambda = NULL, 
+                   seasonal='additive', 
+                   h=prediction_length,
+                   level = c(85, 90))
+
+forecast_fun_no_reg <- function(y, h = h, lambda_sub=NULL, seasonal_sub=NULL) {
+  if(lambda_sub=='NULL'){
+    lambda_sub=NULL
+  }
+  tmp_model <- hw(y, h=h, lambda = lambda_sub, seasonal = seasonal_sub)
+  tmp_fit <- tmp_model %>% forecast(h=h)
+  return(tmp_fit)
+}
+
+e_hw_s03_v05 <- tsCV_jg(y = s03_v05_hw_ts, 
+          forecastfunction = forecast_fun_no_reg,
+          h=cv_h,
+          initial=cv_start,
+          lambda_sub='NULL',
+          seasonal_sub='additive',
+          extra_args = TRUE)
+save(e_hw_s03_v05, file = 'Models/project1_jg_e_hw_s03_v05.RData')
+```
+
+```{r eval=FALSE}
+checkresiduals(s03_v05_hw)
+s03_v05_hw_fit <- s03_v05_hw %>% 
+  forecast(h=prediction_length, level = c(85, 90))
+s03_v05_hw_fit %>% 
+  autoplot() + 
+  autolayer(s03_v05_hw_test_fit, series = 'HoltWinter_Test') +
+  autolayer(s03_v05_hw_test_ts, series = 'Actual') +
+  autolayer(naive(s03_v05_hw_ts, h = prediction_length), series="Naive", PI=FALSE) +
+  autolayer(naive(s03_v05_hw_train_ts, h = length(s03_v05_hw_test_ts)), series="Naive_Test", PI=FALSE) + 
+  scale_color_manual(values=c('springgreen', 'steelblue', 'yellow', 'green')) + 
+  ggtitle('S03 Var05 Holt Winter Plot') + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+hw_frequency <- 6
+s03_v07_hw_ts <- ts(s03_v07_full_ts, frequency = hw_frequency, start = 1)
+s03_v07_hw_train_ts <- window(s03_v07_hw_ts, 
+                                 start = 1, 
+                                 end = floor(test_ratio * 1622/hw_frequency))
+s03_v07_hw_test_ts <- window(s03_v07_hw_ts, 
+                                start = floor(test_ratio * 1622/hw_frequency))
+s03_v07_hw_test <- hw(s03_v07_hw_train_ts, 
+                      lambda = NULL, 
+                      seasonal='additive',
+                      h=length(s03_v07_hw_test_ts), 
+                      level = c(85, 90))
+#checkresiduals(s03_v07_hw_test)
+s03_v07_hw_test_fit <- s03_v07_hw_test %>% 
+  forecast(h=length(s03_v07_hw_test_ts), level = c(85, 90))
+#s03_v07_hw_test_fit %>% 
+#  autoplot() + 
+#  autolayer(s03_v07_hw_test_ts)
+
+#full model
+s03_v07_hw <- holt(s03_v07_hw_ts, 
+                   lambda = NULL, 
+                   seasonal='additive', 
+                   h=prediction_length,
+                   level = c(85, 90))
+
+forecast_fun_no_reg <- function(y, h = h, lambda_sub=NULL, seasonal_sub=NULL) {
+  if(lambda_sub=='NULL'){
+    lambda_sub=NULL
+  }
+  tmp_model <- hw(y, h=h, lambda = lambda_sub, seasonal = seasonal_sub)
+  tmp_fit <- tmp_model %>% forecast(h=h)
+  return(tmp_fit)
+}
+
+e_hw_s03_v07 <- tsCV_jg(y = s03_v07_hw_ts, 
+          forecastfunction = forecast_fun_no_reg,
+          h=cv_h,
+          initial=cv_start,
+          lambda_sub='NULL',
+          seasonal_sub='additive',
+          extra_args = TRUE)
+save(e_hw_s03_v07, file = 'Models/project1_jg_e_hw_s03_v07.RData')
+```
+
+```{r eval=FALSE}
+checkresiduals(s03_v07_hw)
+s03_v07_hw_fit <- s03_v07_hw %>% 
+  forecast(h=prediction_length, level = c(85, 90))
+s03_v07_hw_fit %>% 
+  autoplot() + 
+  autolayer(s03_v07_hw_test_fit, series = 'HoltWinter_Test') +
+  autolayer(s03_v07_hw_test_ts, series = 'Actual') +
+  autolayer(naive(s03_v07_hw_ts, h = prediction_length), series="Naive", PI=FALSE) +
+  autolayer(naive(s03_v07_hw_train_ts, h = length(s03_v07_hw_test_ts)), series="Naive_Test", PI=FALSE) + 
+  scale_color_manual(values=c('springgreen', 'steelblue', 'yellow', 'green')) + 
+  ggtitle('S03 Var07 Holt Winter Plot') + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+#### Arima Model
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+arima_frequency = 90
+s03_v05_arima_ts <- ts(s03_v05_full_ts, frequency = arima_frequency)
+s03_v05_arima_train_ts <- window(s03_v05_arima_ts, start = 1, end = floor(test_ratio * 1622/arima_frequency))
+s03_v05_arima_test_ts <- window(s03_v05_arima_ts, start = floor(test_ratio * 1622/arima_frequency))
+
+s03_v05_arima_test <- Arima(s03_v05_arima_train_ts, 
+                       order = c(1,0,2),
+                       lambda = NULL,
+                       include.drift = TRUE)
+#checkresiduals(s03_v05_arima_test)
+s03_v05_arima_test_fit <- s03_v05_arima_test %>% 
+  forecast(h=length(s03_v05_arima_test_ts)) 
+#s03_v05_arima_test_fit %>% 
+#  autoplot() + 
+#  autolayer(s03_v05_arima_test_ts)
+
+#check full model
+s03_v05_arima <- Arima(s03_v05_arima_ts, 
+                       order = c(1,0,2),
+                       lambda = NULL,
+                       include.drift = TRUE)
+s03_v05_arima_fit <- s03_v05_arima %>% 
+  forecast(h=prediction_length)
+
+forecast_fun_no_reg <- function(y, h = h, xreg=NULL, lambda_sub=NULL, p_sub=NULL, d_sub=NULL, q_sub=NULL) {
+  if(lambda_sub=='NULL'){
+    lambda_sub=NULL
+  }
+  tmp_model <- Arima(y, 
+                    lambda = lambda_sub,
+                    include.drift = TRUE,
+                    order=c(p_sub, d_sub, q_sub))
+  tmp_fit <- tmp_model %>% 
+    forecast(h=h)
+  return(tmp_fit)
+}
+
+e_arima_s03_v05 <- tsCV_jg(y = s03_v05_arima_ts, 
+                   forecastfunction = forecast_fun_no_reg,
+                   h=cv_h,
+                   initial=cv_start,
+                   extra_args = TRUE,
+                   lambda_sub='NULL',
+                   p_sub=1,
+                   d_sub=0,
+                   q_sub=2)
+save(e_arima_s03_v05, file = 'Models/project1_jg_e_arima_s03_v05.RData')
+```
+
+```{r message=FALSE, warning=FALSE,}
+checkresiduals(s03_v05_arima_fit)
+p1 <- s03_v05_arima_fit %>% 
+  autoplot() + 
+  autolayer(s03_v05_arima_test_fit, series = 'Arima_Test') +
+  autolayer(s03_v05_arima_test_ts, series = 'Actual') +
+  autolayer(naive(s03_v05_arima_ts, h = prediction_length), series="Naive", PI=FALSE) +
+  autolayer(naive(s03_v05_arima_train_ts, h = length(s03_v05_arima_test_ts)), series="Naive_Test", PI=FALSE) + 
+  scale_color_manual(values=c('springgreen', 'steelblue', 'yellow', 'green')) + 
+  ggtitle('S03 Var05 Arima Plot') + 
+  theme(plot.title = element_text(hjust = 0.5))
+ggsave(plot = p1, filename = 'Images/s03_arima_plot.png', units = 'in', width = 8, height = 4)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+arima_frequency = 90
+s03_v07_arima_ts <- ts(s03_v07_full_ts, frequency = arima_frequency)
+s03_v07_arima_train_ts <- window(s03_v07_arima_ts, start = 1, end = floor(test_ratio * 1622/arima_frequency))
+s03_v07_arima_test_ts <- window(s03_v07_arima_ts, start = floor(test_ratio * 1622/arima_frequency))
+
+s03_v07_arima_test <- Arima(s03_v07_arima_train_ts, 
+                       order = c(2,0,0),
+                       lambda = NULL,
+                       include.drift = TRUE)
+#checkresiduals(s03_v07_arima_test)
+s03_v07_arima_test_fit <- s03_v07_arima_test %>% 
+  forecast(h=length(s03_v07_arima_test_ts)) 
+#s03_v07_arima_test_fit %>% 
+#  autoplot() + 
+#  autolayer(s03_v07_arima_test_ts)
+
+#check full model
+s03_v07_arima <- Arima(s03_v07_arima_ts, 
+                       order = c(2,0,0),
+                       lambda = NULL,
+                       include.drift = TRUE)
+s03_v07_arima_fit <- s03_v07_arima %>% 
+  forecast(h=prediction_length) 
+
+forecast_fun_no_reg <- function(y, h = h, xreg=NULL, lambda_sub=NULL, p_sub=NULL, d_sub=NULL, q_sub=NULL) {
+  if(lambda_sub=='NULL'){
+    lambda_sub=NULL
+  }
+  tmp_model <- Arima(y, 
+                    lambda = lambda_sub,
+                    include.drift = TRUE,
+                    order=c(p_sub, d_sub, q_sub))
+  tmp_fit <- tmp_model %>% 
+    forecast(h=h)
+  return(tmp_fit)
+}
+
+e_arima_s03_v07 <- tsCV_jg(y = s03_v07_arima_ts, 
+                   forecastfunction = forecast_fun_no_reg,
+                   h=cv_h,
+                   initial=cv_start,
+                   extra_args = TRUE,
+                   lambda_sub='NULL',
+                   p_sub=2,
+                   d_sub=0,
+                   q_sub=0)
+save(e_arima_s03_v07, file = 'Models/project1_jg_e_arima_s03_v07.RData')
+```
+
+```{r message=FALSE, warning=FALSE,}
+checkresiduals(s03_v07_arima_fit)
+s03_v07_arima_fit %>% 
+  autoplot() + 
+  autolayer(s03_v07_arima_test_fit, series = 'Arima_Test') +
+  autolayer(s03_v07_arima_test_ts, series = 'Actual') +
+  autolayer(naive(s03_v07_arima_ts, h = prediction_length), series="Naive", PI=FALSE) +
+  autolayer(naive(s03_v07_arima_train_ts, h = length(s03_v07_arima_test_ts)), series="Naive_Test", PI=FALSE) + 
+  scale_color_manual(values=c('springgreen', 'steelblue', 'yellow', 'green')) + 
+  ggtitle('S03 Var07 Arima Plot') + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+#Load CV tests
+load('Models/project1_jg_e_naive_s03_v05.RData')
+load('Models/project1_jg_e_stl_s03_v05.RData')
+load('Models/project1_jg_e_holt_s03_v05.RData')
+load('Models/project1_jg_e_hw_s03_v05.RData')
+load('Models/project1_jg_e_arima_s03_v05.RData')
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+load('Models/project1_jg_e_naive_s03_v07.RData')
+load('Models/project1_jg_e_stl_s03_v07.RData')
+load('Models/project1_jg_e_holt_s03_v07.RData')
+load('Models/project1_jg_e_hw_s03_v07.RData')
+load('Models/project1_jg_e_arima_s03_v07.RData')
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+#compare models
+model_comparison_s03_v05_df <- data.frame(
+  Name = c('naive', 'stl', 'holt', 'hw', 'arima'),
+  RMSE_10 = c(
+    sqrt(mean(e_naive_s03_v05$e[,10]^2, na.rm=TRUE)),
+    sqrt(mean(e_stl_s03_v05$e[,10]^2, na.rm=TRUE)),
+    sqrt(mean(e_holt_s03_v05$e[,10]^2, na.rm=TRUE)),
+    sqrt(mean(e_hw_s03_v05$e[,10]^2, na.rm=TRUE)),
+    sqrt(mean(e_arima_s03_v05$e[,10]^2, na.rm=TRUE))
+  ),
+  RMSE_100 = c(
+    sqrt(mean(e_naive_s03_v05$e[,100]^2, na.rm=TRUE)),
+    sqrt(mean(e_stl_s03_v05$e[,100]^2, na.rm=TRUE)),
+    sqrt(mean(e_holt_s03_v05$e[,100]^2, na.rm=TRUE)),
+    sqrt(mean(e_hw_s03_v05$e[,100]^2, na.rm=TRUE)),
+    sqrt(mean(e_arima_s03_v05$e[,100]^2, na.rm=TRUE))
+  ),
+  RMSE_140 = c(
+    sqrt(mean(e_naive_s03_v05$e[,140]^2, na.rm=TRUE)),
+    sqrt(mean(e_stl_s03_v05$e[,140]^2, na.rm=TRUE)),
+    sqrt(mean(e_holt_s03_v05$e[,140]^2, na.rm=TRUE)),
+    sqrt(mean(e_hw_s03_v05$e[,140]^2, na.rm=TRUE)),
+    sqrt(mean(e_arima_s03_v05$e[,140]^2, na.rm=TRUE))
+  ),
+  MAPE_10 = c(
+    mean(abs(e_naive_s03_v05$pe[,10]), na.rm = TRUE),
+    mean(abs(e_stl_s03_v05$pe[,10]), na.rm = TRUE),
+    mean(abs(e_holt_s03_v05$pe[,10]), na.rm = TRUE),
+    mean(abs(e_hw_s03_v05$pe[,10]), na.rm = TRUE),
+    mean(abs(e_arima_s03_v05$pe[,10]), na.rm = TRUE)
+  ),
+  MAPE_100 = c(
+    mean(abs(e_naive_s03_v05$pe[,100]), na.rm = TRUE),
+    mean(abs(e_stl_s03_v05$pe[,100]), na.rm = TRUE),
+    mean(abs(e_holt_s03_v05$pe[,100]), na.rm = TRUE),
+    mean(abs(e_hw_s03_v05$pe[,100]), na.rm = TRUE),
+    mean(abs(e_arima_s03_v05$pe[,100]), na.rm = TRUE)
+  ),
+  MAPE_140 = c(
+    mean(abs(e_naive_s03_v05$pe[,140]), na.rm = TRUE),
+    mean(abs(e_stl_s03_v05$pe[,140]), na.rm = TRUE),
+    mean(abs(e_holt_s03_v05$pe[,140]), na.rm = TRUE),
+    mean(abs(e_hw_s03_v05$pe[,140]), na.rm = TRUE),
+    mean(abs(e_arima_s03_v05$pe[,140]), na.rm = TRUE)
+  )
+)
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+#compare models
+model_comparison_s03_v07_df <- data.frame(
+  Name = c('naive', 'stl', 'holt', 'hw', 'arima'),
+  RMSE_10 = c(
+    sqrt(mean(e_naive_s03_v07$e[,10]^2, na.rm=TRUE)),
+    sqrt(mean(e_stl_s03_v07$e[,10]^2, na.rm=TRUE)),
+    sqrt(mean(e_holt_s03_v07$e[,10]^2, na.rm=TRUE)),
+    sqrt(mean(e_hw_s03_v07$e[,10]^2, na.rm=TRUE)),
+    sqrt(mean(e_arima_s03_v07$e[,10]^2, na.rm=TRUE))
+  ),
+  RMSE_100 = c(
+    sqrt(mean(e_naive_s03_v07$e[,100]^2, na.rm=TRUE)),
+    sqrt(mean(e_stl_s03_v07$e[,100]^2, na.rm=TRUE)),
+    sqrt(mean(e_holt_s03_v07$e[,100]^2, na.rm=TRUE)),
+    sqrt(mean(e_hw_s03_v07$e[,100]^2, na.rm=TRUE)),
+    sqrt(mean(e_arima_s03_v07$e[,100]^2, na.rm=TRUE))
+  ),
+  RMSE_140 = c(
+    sqrt(mean(e_naive_s03_v07$e[,140]^2, na.rm=TRUE)),
+    sqrt(mean(e_stl_s03_v07$e[,140]^2, na.rm=TRUE)),
+    sqrt(mean(e_holt_s03_v07$e[,140]^2, na.rm=TRUE)),
+    sqrt(mean(e_hw_s03_v07$e[,140]^2, na.rm=TRUE)),
+    sqrt(mean(e_arima_s03_v07$e[,140]^2, na.rm=TRUE))
+  ),
+  MAPE_10 = c(
+    mean(abs(e_naive_s03_v07$pe[,10]), na.rm = TRUE),
+    mean(abs(e_stl_s03_v07$pe[,10]), na.rm = TRUE),
+    mean(abs(e_holt_s03_v07$pe[,10]), na.rm = TRUE),
+    mean(abs(e_hw_s03_v07$pe[,10]), na.rm = TRUE),
+    mean(abs(e_arima_s03_v07$pe[,10]), na.rm = TRUE)
+  ),
+  MAPE_100 = c(
+    mean(abs(e_naive_s03_v07$pe[,100]), na.rm = TRUE),
+    mean(abs(e_stl_s03_v07$pe[,100]), na.rm = TRUE),
+    mean(abs(e_holt_s03_v07$pe[,100]), na.rm = TRUE),
+    mean(abs(e_hw_s03_v07$pe[,100]), na.rm = TRUE),
+    mean(abs(e_arima_s03_v07$pe[,100]), na.rm = TRUE)
+  ),
+  MAPE_140 = c(
+    mean(abs(e_naive_s03_v07$pe[,140]), na.rm = TRUE),
+    mean(abs(e_stl_s03_v07$pe[,140]), na.rm = TRUE),
+    mean(abs(e_holt_s03_v07$pe[,140]), na.rm = TRUE),
+    mean(abs(e_hw_s03_v07$pe[,140]), na.rm = TRUE),
+    mean(abs(e_arima_s03_v07$pe[,140]), na.rm = TRUE)
+  )
+)
+
+```
+
+### S03 Summary
+
+The results of the hyperparameter training of the models indicate that STL and ARIMA models have outperformed the naive model while trading off as the best model in various steps of measurement. Upon visual inspection, it appears the STL model provides a more reliable trend tracking component, as the ARIMA model is greatly over-guessing on the presented train/test split.  It appears the STL model is more reactive to the cylce component of the trend-cyle; therefore, it will be the model used.  If the prediction length were to be much more than 140 periods, ti appears the ARIMA model would fit best due to its better capture of the trend component.  It is noted that the STL model does not pass the traditional statistical tests; however, it appears to be the best attempted fit and remains the selected model for S03 V05.  For S03 V07, the same model type, with a slightly different set of hyperparameters was chosen and for similar reasons which returned similar results.
+
+```{r message=FALSE, warning=FALSE,}
+model_comparison_s03_v05_df %>% 
+  arrange(RMSE_140) %>% 
+  kable('html') %>% 
+  kable_styling()
+```
+
+```{r message=FALSE, warning=FALSE,}
+model_comparison_s03_v07_df %>% 
+  arrange(RMSE_140) %>% 
+  kable('html') %>% 
+  kable_styling()
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+#Output predictions and merge with excel output
+s03_v05_output <- list(Var05_new = s03_v05_stl_fit$mean)
+#update this
+s03_v07_output <- list(Var07_new = s03_v07_stl_fit$mean)
+#make output df
+excel_output_df <- raw_excel_df %>% filter(
+  group=='S03'&
+    is.na(Var01)&
+    is.na(Var02)&
+    is.na(Var03)&
+    is.na(Var05)&
+    is.na(Var07)) %>% 
+  select(SeriesInd, group) %>% 
+  bind_cols(s03_v05_output, s03_v07_output)
+
+#re-insert into original df to get the indices
+s03_out_df <- raw_excel_df %>% 
+  filter(group=='S03') %>% 
+  left_join(excel_output_df, by = c('group'='group', 'SeriesInd'='SeriesInd')) %>% 
+  mutate(Var05_tmp = ifelse(is.na(Var05),Var05_new, Var05)) %>% 
+  mutate(Var07_tmp = ifelse(is.na(Var07),Var07_new, Var07)) %>% 
+  select(-Var05, -Var05_new, -Var07, -Var07_new) %>% 
+  rename(Var05=Var05_tmp, Var07=Var07_tmp) %>% 
+  select(SeriesInd, group, Var01, Var02, Var03, Var05, Var07)
+
+write.csv(s03_out_df, file ='s03_output.csv', na = '')
+
+#save df to excel
+file_name <- 'DATA624_project1_submission.xls'
+wb <- loadWorkbook(file_name)
+writeData(wb, x = s03_out_df, sheet = 'S03')
+saveWorkbook(wb, file_name, overwrite = TRUE)
+```
+
+<!-- #################### Old -->
+
+```{r eval=FALSE}
+
+forecast_fun_reg <- function(y, h = h, xreg=NULL) {
+  new_xreg <- fourier(y, K=9)
+  x <- auto.arima(y, lambda = 0, xreg=new_xreg) %>% 
+    forecast(xreg=new_xreg, h=h) 
+  x$mean <- x$mean[1:h]
+  return(x)
+}
+source('local_cv_test.R')
+
+#try cv instead
+e <- tsCV_jg(y = s03_v05_arima_ts, 
+          forecastfunction = forecast_fun_no_reg,
+          h=2,
+          initial=1600)
+sqrt(colMeans(e^2, na.rm = TRUE))
+```
+
+```{r eval=FALSE}
+ets_frequency <- 18
+s03_v05_ets_ts <- ts(s03_v05_full_ts, frequency = ets_frequency, start = 1)
+s03_v05_ets_train_ts <- subset(s03_v05_ets_ts, start = 1, end = floor(test_ratio * 1622))
+s03_v05_ets_test_ts <- subset(s03_v05_ets_ts, start = floor(test_ratio * 1622))
+s03_v05_ets_test <- ets(s03_v05_ets_train_ts, 
+                  'AAN',
+                  lambda = NULL)
+s03_v05_ets_test
+checkresiduals(s03_v05_ets_test)
+autoplot(s03_v05_ets_test)
+s03_v05_ets_test_fit <- s03_v05_ets_test %>% forecast(h=test_length)
+s03_v05_ets_test_fit %>% 
+  autoplot() + 
+  autolayer(s03_v05_ets_test_ts)
+
+s03_v05_tbats_ts <- ts(s03_v05_full_ts, frequency = 30, start = min(excel_df$SeriesInd))
+s03_v05_tbats_train_ts <- subset(s03_v05_tbats_ts, start = 1, end = length(s03_v05_tbats_ts)-test_length)
+s03_v05_tbats_test_ts <- subset(s03_v05_tbats_ts, start = length(s03_v05_tbats_ts)-test_length+1)
+s03_v05_tbats_test <- tbats(s03_v05_tbats_train_ts)
+s03_v05_tbats_test
+checkresiduals(s03_v05_tbats_test)
+s03_v05_tbats_test_fit <- s03_v05_tbats_test %>% forecast(h=test_length)
+s03_v05_tbats_test_fit %>% 
+  autoplot() + 
+  autolayer(s03_v05_tbats_test_ts)
+```
