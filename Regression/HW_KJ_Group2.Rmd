@@ -32,6 +32,10 @@ suppressWarnings(suppressMessages(library(mlbench)))
 suppressWarnings(suppressMessages(library(psych)))
 suppressWarnings(suppressMessages(library(mi)))
 
+suppressWarnings(suppressMessages(library(randomForest)))
+suppressWarnings(suppressMessages(library(party)))
+suppressWarnings(suppressMessages(library(gbm)))
+
 ```
 
 # Overview
@@ -45,46 +49,190 @@ suppressWarnings(suppressMessages(library(mi)))
 Recreate the simulated data from Exercise 7.2:
 
 ```{r 8.1}
-library(mlbench)
 set.seed(200)
-simulated <- mlbench.friedman1(200, sd = 1)
-simulated <- cbind(simulated$x, simulated$y)
-simulated <- as.data.frame(simulated)
-colnames(simulated)[ncol(simulated)] <- "y"
+simulated1 <- mlbench.friedman1(200, sd = 1)
+simulated1 <- cbind(simulated1$x, simulated1$y)
+simulated1 <- as.data.frame(simulated1)
+colnames(simulated1)[ncol(simulated1)] <- "y"
 ```
 
 (a) Fit a random forest model to all of the predictors, then estimate the
-variable importance scores:
+variable importance scores. Did the random forest model significantly use the uninformative predictors (V6 - V10)?
 
-```{r}
-library(randomForest)
-library(caret)
-model1 <- randomForest(y ~ ., data = simulated, 
-                       importance = TRUE,
-                       ntree = 1000)
-rfImp1 <- varImp(model1, scale = FALSE)
+**It did not. The plot below shows that they are the 5 least informative variables.**
+
+```{r rf1}
+set.seed(200)
+model1 <- randomForest(y ~ ., data = simulated1, importance = T, ntree = 1000)
+
+rfImp1 <- 
+    varImp(model1, scale = FALSE) %>% 
+    mutate(Var = rownames(.)) %>% 
+    arrange(desc(Overall)) %>% 
+    dplyr::select(Var, Overall)
+
+ggplot(rfImp1) + 
+  geom_col(aes(x = reorder(Var, Overall), y = Overall)) +
+  labs(x = "", y = "") + 
+  coord_flip()  + 
+  theme(axis.text = element_text(size=20, color="black", face = "bold"), plot.title = element_text(size=16)) + 
+  ggtitle("No correlation")
+  
 ```
-
-
-Did the random forest model significantly use the uninformative predictors (V6 - V10)?
 
 
 (b) Now add an additional predictor that is highly correlated with one of the
 informative predictors. For example:
 
 ```{r}
-simulated$duplicate1 <- simulated$V1 + rnorm(200) * .1
-cor(simulated$duplicate1, simulated$V1)
+set.seed(200)
+simulated2 <- 
+  simulated1 %>% 
+  mutate(duplicate1 = V1 + rnorm(200) * .1)
+
+cor(simulated2$duplicate1, simulated2$V1)
 ```
 
 
-Fit another random forest model to these data. Did the importance score for V1 change? What happens when you add another predictor that is also highly correlated with V1?
+Fit another random forest model to these data. Did the importance score for V1 change? 
 
-(c) Use the cforest function in the party package to fit a random forest model using conditional inference trees. The party package function varimp can calculate predictor importance. The conditional argument of that function toggles between the traditional importance measure and the modified version described in Strobl et al. (2007). Do these importances show the same pattern as the traditional random forest model?
+**Yes, the importance score did decrease for V1 from 8.61 to 6.80, and the highly correlated variable is the next important at 4.21**
+
+```{r rf2}
+set.seed(200)
+model2 <- randomForest(y ~ ., data = simulated2, 
+                       importance = TRUE,
+                       ntree = 1000)
+
+rfImp2 <- varImp(model2, scale = FALSE) %>% 
+    mutate(Var = rownames(.)) %>% 
+    arrange(desc(Overall)) %>% 
+    dplyr::select(Var, Overall)
+
+
+ggplot(rfImp2) + 
+  geom_col(aes(x = reorder(Var, Overall), y = Overall)) +
+  labs(x = "", y = "") + 
+  coord_flip()  + 
+  theme(axis.text = element_text(size=20, color="black", face = "bold"), plot.title = element_text(size=16)) + 
+  ggtitle("2 correlated variables")
+```
+
+
+What happens when you add another predictor that is also highly correlated with V1?
+
+```{r}
+# add another correlated variable
+set.seed(5)
+simulated3 <- 
+  simulated2 %>% 
+  mutate(duplicate2 = V1 + rnorm(200) * .1)
+
+cor(simulated3$duplicate2, simulated3$V1)
+```
+
+
+**From the table below, we can see that adding another highly correlated variable further diluted the importance scores of `V1` and `duplicate1`.** 
+ 
+**As KJ note on p180, when variables are extremely correlated, the "choice of which to use in a sp0lit is somewhat random."**
+ 
+**Having highly correlated variables made the correct interpretation of predictor importance difficult. Using the model with 3 highly correlated variables, one gets the impression that  `V1`, `duplicate1` and `duplicate2` are of only moderate importance to the model. However, without the other 2 variables, one would understand that the signal coming from V1 is actually most important to the model.**
+
+```{r rf3}
+
+model3 <- randomForest(y ~ ., data = simulated3, importance = TRUE, ntree = 1000)
+
+rfImp3 <- varImp(model3, scale = FALSE) %>%
+    mutate(Var = rownames(.)) %>%
+    arrange(desc(Overall)) %>%
+    dplyr::select(Var, Overall)
+
+ggplot(rfImp3) + 
+  geom_col(aes(x = reorder(Var, Overall), y = Overall)) +
+  labs(x = "", y = "") + 
+  coord_flip()  + 
+  theme(axis.text = element_text(size=20, color="black", face = "bold"), plot.title = element_text(size=16)) + 
+  ggtitle("3 correlated variables")
+```
+
+
+(c) Use the `cforest` function in the `party` package to fit a random forest model using conditional inference trees. The party package function `varimp` can calculate predictor importance. The conditional argument of that function toggles between the traditional importance measure and the modified version described in Strobl et al. (2007). Do these importances show the same pattern as the traditional random forest model?
+
+**Yes, in the 3 plots below, the same pattern is displayed - although perhaps to a lesser to degree. The importance of `V1` becomes more diluted when more highly correlated variables are present.**
+
+```{r cforest, fig.width=12, fig.height=8}
+
+crf1 <- cforest(y ~ ., data = simulated1, controls = cforest_unbiased(ntree = 1000))
+crf2 <- cforest(y ~ ., data = simulated2, controls = cforest_unbiased(ntree = 1000))
+crf3 <- cforest(y ~ ., data = simulated3, controls = cforest_unbiased(ntree = 1000))
+
+crf_imp <- data.frame(
+  crf3 = varimp(crf3),
+  crf1 = c(varimp(crf1), NA, NA), 
+  crf2 = c(varimp(crf2), NA)
+  ) %>% 
+  dplyr::select(sort(names(.))) %>% 
+  mutate(Var = row.names(.)) 
+
+gridExtra::grid.arrange(
+  ggplot(na.omit(crf_imp)) + 
+    geom_col(aes(x = reorder(Var, crf1), y = crf1)) +
+    labs(x = "", y = "") + 
+    coord_flip()  + 
+    theme(axis.text = element_text(size=20, color="black", face = "bold"), plot.title = element_text(size=16)) + 
+    ggtitle("No correlation"),
+  ggplot(na.omit(crf_imp[, c("Var", "crf2")])) + 
+    geom_col(aes(x = reorder(Var, crf2), y = crf2)) + 
+    labs(x = "", y = "") + 
+    coord_flip()  + 
+    theme(axis.text = element_text(size=20, color="black", face = "bold"), plot.title = element_text(size=16)) +
+    ggtitle("2 correlated variables"),
+  ggplot(crf_imp) + 
+    geom_col(aes(x = reorder(Var, crf3), y = crf3))  + 
+    labs(x = "", y = "") + 
+    coord_flip()  + 
+    theme(axis.text = element_text(size=20, color="black", face = "bold"), plot.title = element_text(16)) +
+    ggtitle("3 correlated variables"),
+  ncol = 3
+)
+
+```
+
 
 
 (d) Repeat this process with different tree models, such as boosted trees and Cubist. Does the same pattern occur?
 
+**Interestingly, `V1` is only the second most important variable in the first non-correlated dataset. When we add the first highly correlated variable, `V1`'s position does decline some, but not as much as the first random forest model. When the second highly correlated variable is added, `V1`'s importance remains relatively unchanged.**
+
+```{r}
+gbm1 <- train(y ~ ., data = simulated1, method = "gbm", verbose = F)
+gbm2 <- train(y ~ ., data = simulated2, method = "gbm", verbose = F)
+gbm3 <- train(y ~ ., data = simulated3, method = "gbm", verbose = F)
+
+
+gridExtra::grid.arrange(
+  plot(varImp(gbm1, scale = F), main = "No correlation"),
+  plot(varImp(gbm2, scale = F), main = "2 correlated variables"),
+  plot(varImp(gbm3, scale = F), main = "3 correlated variables"),
+  ncol = 3
+)
+```
+
+**From the plots below, the Cubist model's variable importance is the least affected by the addition highly correlated variables. `V1`'s variable importance remains largely unchanged When the first highly correlated variable is added. When the second one is added, `V1` does drop a position in importance, but its score only marginally declines.**
+
+```{r}
+cubist1 <- train(y ~ ., data = simulated1, method = "cubist", control = Cubist::cubistControl(seed = 1))
+cubist2 <- train(y ~ ., data = simulated2, method = "cubist", control = Cubist::cubistControl(seed = 1))
+cubist3 <- train(y ~ ., data = simulated3, method = "cubist", control = Cubist::cubistControl(seed = 1))
+
+
+gridExtra::grid.arrange(
+  plot(varImp(cubist1, scale = F), main = "No correlation"),
+  plot(varImp(cubist2, scale = F), main = "2 correlated variables"),
+  plot(varImp(cubist3, scale = F), main = "3 correlated variables"),
+  ncol = 3
+)
+```
 
 ## Question 8.3
 
@@ -92,12 +240,15 @@ In stochastic gradient boosting the bagging fraction and learning rate will gove
 
 (a) Why does the model on the right focus its importance on just the first few of predictors, whereas the model on the left spreads importance across more predictors?
 
+
 (b) Which model do you think would be more predictive of other samples?
 
 
 (c) How would increasing interaction depth affect the slope of predictor importance for either model in Fig. 8.24?
 
+
 ## Question 8.7
+
 
 Refer to Exercises 6.3 and 7.5 which describe a chemical manufacturing process. Use the same data imputation, data splitting, and pre-processing steps as before and train several tree-based models:
 
