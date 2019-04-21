@@ -260,6 +260,7 @@ Refer to Exercises 6.3 and 7.5 which describe a chemical manufacturing process. 
 ```{r fig.height=15}
 
 library(AppliedPredictiveModeling)
+library(xgboost)
 data(ChemicalManufacturingProcess)
 
 set.seed(5)
@@ -271,7 +272,42 @@ chem_df <- predict(chem_preprocess, ChemicalManufacturingProcess)
 
 training_rows <- createDataPartition(chem_df$Yield, p =.8, list = F)
 
+#### Linear Model ####
 
+#### CART Model ####
+
+#### Random Forest Model ####
+
+#### Extreme Gradient Boosting Trees ####
+xgb_control <- trainControl(method = "repeatedcv",
+                            number = 5, #num_cvs,
+                            repeats = 1, #num_repeats,
+                            allowParallel = T,
+                            verboseIter = T,
+                            savePredictions = "final"
+                            )
+
+xgb_grid <-  expand.grid(nrounds=250,
+                        eta = c(0.025, .05, .1), 
+                        max_depth = c(5, 10, 20), 
+                        colsample_bytree = seq(.25, 1, .25),
+                        gamma = 0,
+                        min_child_weight = 0,
+                        subsample = 1
+                        )
+
+xgb_model <- train(Yield ~ ., 
+                    data = chem_df[training_rows, ],
+                    method = "xgbTree",
+                    trControl = xgb_control,
+                    tuneGrid = xgb_grid
+                    )
+
+colMeans(xgb_model$resample[, -4])
+
+y_pred <- predict(xgb_model, chem_df[-training_rows, ])
+
+sqrt(mean((y_pred - chem_df[-training_rows, "Yield"])^2))
 
 
 ```
