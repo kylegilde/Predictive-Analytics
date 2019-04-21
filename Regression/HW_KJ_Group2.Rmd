@@ -1,15 +1,15 @@
 ---
 title: "Applied Predictive Modeling"
+subtitle: "DATA 624 Group 2 Homework"
 author: "John Grando, Kyle Gilde, Jonathan Hernandez, Albert Gilharry, Neil Hwang"
 date: "January 27, 2019"
 output:
-  word_document:
-    toc: yes
   html_document:
     code_folding: show
     toc: yes
     toc_float: yes
-subtitle: DATA 624 Group 2 Homework
+    
+
 ---
 
 ```{r setup, include=FALSE}
@@ -17,7 +17,11 @@ knitr::opts_chunk$set(fig.width=10,
                       fig.height=5,
                       fig.align = 'center', 
                       echo = TRUE,
-                      cache = TRUE, warning=F)
+                      cache = TRUE, 
+                      warning=F)
+# output:
+#   word_document:
+#     toc: yes
 ```
 
 ```{r echo=FALSE}
@@ -34,9 +38,13 @@ suppressWarnings(suppressMessages(library(mlbench)))
 suppressWarnings(suppressMessages(library(psych)))
 suppressWarnings(suppressMessages(library(mi)))
 
+# tree packages
 suppressWarnings(suppressMessages(library(randomForest)))
 suppressWarnings(suppressMessages(library(party)))
 suppressWarnings(suppressMessages(library(gbm)))
+suppressWarnings(suppressMessages(library(AppliedPredictiveModeling)))
+suppressWarnings(suppressMessages(library(xgboost)))
+suppressWarnings(suppressMessages(library(MLmetrics)))
 
 ```
 
@@ -255,70 +263,251 @@ In stochastic gradient boosting the bagging fraction and learning rate will gove
 ## Question 8.7
 
 
-Refer to Exercises 6.3 and 7.5 which describe a chemical manufacturing process. Use the same data imputation, data splitting, and pre-processing steps as before and train several tree-based models:
+Refer to Exercises 6.3 and 7.5 which describe a chemical manufacturing process. Use the same data imputation, data splitting, and pre-processing steps as before and train several tree-based models.
 
-```{r fig.height=15}
+**For the 4 models, we used 5-fold cross-validation in order to tune the hyperparameters. We will compare the models using RMSE and MAPE.**
 
-library(AppliedPredictiveModeling)
-library(xgboost)
+**For the linear and 3 tree-based models, we created 2 preprocessed datasets. For both, we imputted the missing values using tree-based bagging. Additionally, for the elastic-net benchmark model, we removed near-zero variance variables, and for interpretability, we removed highly correlated variables. These methods reduced the number of predictor variables from 57 to 47. At first, we also attempted to center and scale the elastic-net data. However, this made inter-model comparisons difficult The RMSE units were not the same as the tree models, and centering the means at zero seemed to vastly inflate the MAPE values.**
+
+```{r data_prep}
 data(ChemicalManufacturingProcess)
 
 set.seed(5)
-# missing_counts <- data.frame(n = sapply(ChemicalManufacturingProcess, function(x) sum(is.na(x))))
-# ggplot(missing_counts) + geom_col(aes(x = reorder(row.names(missing_counts), n), y = n)) + coord_flip()
+# add mape to the summary functions
+mapeSummary <- function (data,
+    lev = NULL,
+    model = NULL) {
+    c(MAPE = MLmetrics::MAPE(data$pred, data$obs) * 100,
+      RMSE = MLmetrics::RMSE(data$pred, data$obs),
+      Rsquared = summary(lm(pred ~ obs, data))$r.squared)
+}
 
-chem_preprocess <- preProcess(ChemicalManufacturingProcess, method = c("bagImpute"))
+
+measure_cv_results <- function(train_obj){
+  # measures the best cv results
+  colMeans(train_obj$resample[, -4])
+}
+
+measure_test_results <- function(y_pred, y_test){
+  # measures the test set results
+  c(MAPE = MLmetrics::MAPE(y_pred, y_test) * 100,
+    RMSE = MLmetrics::RMSE(y_pred, y_test))
+}
+
+# preprocess for trees, impute missing
+(chem_preprocess <- preProcess(ChemicalManufacturingProcess, method = c("bagImpute")))
 chem_df <- predict(chem_preprocess, ChemicalManufacturingProcess)
 
+# train-test partition
 training_rows <- createDataPartition(chem_df$Yield, p =.8, list = F)
+x_train <- chem_df[training_rows, ]
+x_test <- chem_df[-training_rows, ]
+y_test <- chem_df[-training_rows, "Yield"]
 
+
+#### Linear Data ####
+(chem_preprocess_lm <- preProcess(ChemicalManufacturingProcess, method = c("nzv", "corr", "bagImpute"))) # "center", "scale", 
+chem_df_lm <- predict(chem_preprocess_lm, ChemicalManufacturingProcess)
+
+x_train_lm <- chem_df_lm[training_rows, ]
+x_test_lm <- chem_df_lm[-training_rows, ]
+y_test_lm <- chem_df_lm[-training_rows, "Yield"]
+```
+
+
+
+
+**As previously mentioned, we chose the elastic-net model for the linear-model benchmark. We tested 10 sets of alphas and lambdas to regularize the model.**
+
+```{r lm}
 #### Linear Model ####
+set.seed(5)
+lm_control <- trainControl(
+  method = "cv",
+  number = 5, #num_cvs,
+  allowParallel = T,
+  # verboseIter = T,
+  savePredictions = "final",
+  summaryFunction = mapeSummary
+  )
 
+lm_model <- train(Yield ~ ., 
+                    data = x_train_lm,
+                    method = "glmnet",
+                    trControl = lm_control,
+                    tuneLength = 10
+                    )
+
+(lm_model$bestTune)
+
+lm_y_pred <- predict(lm_model, x_test_lm)
+
+
+# sources: http://www.sthda.com/english/articles/37-model-selection-essentials-in-r/153-penalized-regression-essentials-ridge-lasso-elastic-net/#elastic-net
+
+```
+
+**For the first tree model, we used CART and found that a cost-complexity parameter of .08 was optimal.**
+
+```{r}
 #### CART Model ####
 
-#### Random Forest Model ####
+set.seed(5)
+cart_control <- trainControl(
+  method = "cv",
+  number = 5, #num_cvs,
+  allowParallel = T,
+  # verboseIter = T,
+  savePredictions = "final",
+  summaryFunction = mapeSummary
+  )
 
+cart_model <- train(Yield ~ ., 
+                    data = x_train,
+                    method = "rpart",
+                    metric="RMSE",
+                    trControl = cart_control,
+                    tuneLength = 10
+                    )
+
+(cart_model$bestTune)
+
+cart_y_pred <- predict(cart_model, x_test)
+
+# http://www.sthda.com/english/articles/35-statistical-machine-learning-essentials/141-cart-model-decision-tree-essentials/#loading-required-r-packages
+
+```
+
+**For the second tree model, we tuned a Random Forest model. The optimal number of randomly selected features was found to be 20.**
+
+```{r rf}
+#### Random Forest Model ####
+set.seed(5)
+rf_control <- trainControl(
+  method = "cv",
+  number = 5, #num_cvs,
+  allowParallel = T,
+  # verboseIter = T,
+  savePredictions = "final",
+  summaryFunction = mapeSummary
+  )
+
+rf_grid <- expand.grid(mtry = seq(5, 30, 5))
+
+rf_model <- train(Yield ~ ., 
+                    data = x_train,
+                    method = "rf",
+                    metric="RMSE",
+                    trControl = rf_control,
+                    tuneGrid = rf_grid,
+                    ntree = 1000,
+                    importance = T
+                    )
+
+(rf_model$bestTune)
+
+rf_y_pred <- predict(rf_model, x_test)
+```
+
+**Finally, for the third tree model, we used Extreme Gradient Boosting. We tuned the learning rate, max depth and the subsample-column ratio.** 
+
+
+```{r xgb}
 #### Extreme Gradient Boosting Trees ####
-xgb_control <- trainControl(method = "repeatedcv",
+set.seed(5)
+xgb_control <- trainControl(method = "cv",
                             number = 5, #num_cvs,
-                            repeats = 1, #num_repeats,
                             allowParallel = T,
-                            verboseIter = T,
-                            savePredictions = "final"
+                            # verboseIter = T,
+                            savePredictions = "final",
+                            summaryFunction = mapeSummary
                             )
 
 xgb_grid <-  expand.grid(nrounds=250,
-                        eta = c(0.025, .05, .1), 
-                        max_depth = c(5, 10, 20), 
-                        colsample_bytree = seq(.25, 1, .25),
+                        eta = c(0.025, .05, .1), #.05, # 
+                        max_depth = c(5, 10, 20), #5, #
+                        colsample_bytree = seq(.25, 1, .25), #.25, #
                         gamma = 0,
                         min_child_weight = 0,
                         subsample = 1
                         )
 
 xgb_model <- train(Yield ~ ., 
-                    data = chem_df[training_rows, ],
+                    data = x_train,
                     method = "xgbTree",
                     trControl = xgb_control,
                     tuneGrid = xgb_grid
                     )
 
-colMeans(xgb_model$resample[, -4])
-
-y_pred <- predict(xgb_model, chem_df[-training_rows, ])
-
-sqrt(mean((y_pred - chem_df[-training_rows, "Yield"])^2))
-
-
+xgb_y_pred <- predict(xgb_model, x_test)
 ```
 
 
 (a) Which tree-based regression model gives the optimal resampling and test set performance?
 
+**In barplots shown below, we see that while the Extreme Gradient Boosting (EGB) model had the lowest RMSE and MAPE in cross-validation, the Random Forest (RF) model had the lowest RMSE and MAPE ob test datasets. On average, the RF models had only an absolute difference of 2%. The EGB model was overfit to the training dataset.**
+
+```{r measure, fig.height=12, fig.width=12}
+
+# collect all the train model objects
+all_models <- list(elastic_net = lm_model, cart = cart_model, rf = rf_model, xgboost = xgb_model)
+
+# calculate the cv results
+all_cv_results <- 
+  lapply(all_models, measure_cv_results) %>% 
+  data.frame() %>% 
+  t() %>% 
+  data.frame() %>% 
+  tibble::rownames_to_column("model")
+
+# collect all the y predictions
+all_y_preds <- list(elastic_net = lm_y_pred, cart = cart_y_pred, rf = rf_y_pred, xgboost = xgb_y_pred)
+
+# calculate the test results
+all_test_results <- 
+  lapply(all_y_preds, function(x) measure_test_results(x, y_test)) %>% 
+  data.frame() %>% 
+  t() %>% 
+  data.frame() %>% 
+  tibble::rownames_to_column("model")
+
+
+gridExtra::grid.arrange(
+  ggplot(all_cv_results) + geom_col(aes(x = reorder(model, -MAPE), y = MAPE)) + coord_flip() + xlab("") + theme(axis.text = element_text(size=20, color="black", face = "bold"), plot.title = element_text(size=16)) + ggtitle("CV"),
+  ggplot(all_cv_results) + geom_col(aes(x = reorder(model, -RMSE), y = RMSE)) + coord_flip() + xlab("") + theme(axis.text = element_text(size=20, color="black", face = "bold"), plot.title = element_text(size=16)) + ggtitle("CV"),
+    ggplot(all_test_results) + geom_col(aes(x = reorder(model, -MAPE), y = MAPE)) + coord_flip() + xlab("") + theme(axis.text = element_text(size=20, color="black", face = "bold"), plot.title = element_text(size=16)) + ggtitle("Test"),
+  ggplot(all_test_results) + geom_col(aes(x = reorder(model, -RMSE), y = RMSE)) + coord_flip() + xlab("") + theme(axis.text = element_text(size=20, color="black", face = "bold"), plot.title = element_text(size=16)) + ggtitle("Test"),
+  ncol = 2
+)
+```
+
+
 (b) Which predictors are most important in the optimal tree-based regression model? Do either the biological or process variables dominate the list?
+
+**In the RF model, ManufacturingProcess32 is the most important variable. It is approximately twice as important as the next variable. Overall, the manufacturing process variables compose 6 of the top 10 most important features. However, because we did not remove highly correlated variables from the RF model, this ranking will likely not hold when we examine the elastic-net model.**
+
+```{r, fig.width=12, fig.height=12}
+rf_var_imp <- varImp(rf_model)
+plot(rf_var_imp)
+```
+
 
 How do the top 10 important predictors compare to the top 10 predictors from the optimal linear and nonlinear models?
 
+**As suspected, the top 10 important predictors and the importance distribution in general for the elastic-net (EN) model are vastly different. The ManufacturingProcess is by several orders of magnitude the most important predictor, and the top predictors are all manufacturing-process variables. In the EN model, approximately only 5 features are substantial sources of information, while the rest are near zero. This is in stark contrast to the much more evenly distributed importance in the RF model. Because we removed the correlation, the EN model is a much more accurate representation of the predictor importance.**
+
+```{r, fig.height=12, fig.width=12}
+gridExtra::grid.arrange(
+  plot(rf_var_imp, main = "Random Forest"),
+  plot(varImp(lm_model), main = "ElasticNet"),
+  ncol = 2
+)
+```
+
+
 (c) Plot the optimal single tree with the distribution of yield in the terminal nodes. Does this view of the data provide additional knowledge about the biological or process predictors and their relationship with yield?
 
+```{r}
+
+```
 
