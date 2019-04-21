@@ -1,13 +1,15 @@
 ---
 title: "Applied Predictive Modeling"
-subtitle: "DATA 624 Group 2 Homework"
 author: "John Grando, Kyle Gilde, Jonathan Hernandez, Albert Gilharry, Neil Hwang"
 date: "January 27, 2019"
 output:
+  word_document:
+    toc: yes
   html_document:
     code_folding: show
     toc: yes
     toc_float: yes
+subtitle: DATA 624 Group 2 Homework
 ---
 
 ```{r setup, include=FALSE}
@@ -240,17 +242,40 @@ In stochastic gradient boosting the bagging fraction and learning rate will gove
 
 (a) Why does the model on the right focus its importance on just the first few of predictors, whereas the model on the left spreads importance across more predictors?
 
+****
 
 (b) Which model do you think would be more predictive of other samples?
 
+****
 
 (c) How would increasing interaction depth affect the slope of predictor importance for either model in Fig. 8.24?
 
+****
 
 ## Question 8.7
 
 
 Refer to Exercises 6.3 and 7.5 which describe a chemical manufacturing process. Use the same data imputation, data splitting, and pre-processing steps as before and train several tree-based models:
+
+```{r fig.height=15}
+
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+
+set.seed(5)
+# missing_counts <- data.frame(n = sapply(ChemicalManufacturingProcess, function(x) sum(is.na(x))))
+# ggplot(missing_counts) + geom_col(aes(x = reorder(row.names(missing_counts), n), y = n)) + coord_flip()
+
+chem_preprocess <- preProcess(ChemicalManufacturingProcess, method = c("bagImpute"))
+chem_df <- predict(chem_preprocess, ChemicalManufacturingProcess)
+
+training_rows <- createDataPartition(chem_df$Yield, p =.8, list = F)
+
+
+
+
+```
+
 
 (a) Which tree-based regression model gives the optimal resampling and test set performance?
 
